@@ -1,4 +1,4 @@
-# NVFlare Provisioning Dashboard Frontend
+# SoraChain Provisioning Dashboard Frontend
 
 A modern, responsive React-based frontend for the NVFlare Provisioning Dashboard. This application provides an intuitive interface for managing federated learning projects, users, and configurations.
 
@@ -10,7 +10,6 @@ A modern, responsive React-based frontend for the NVFlare Provisioning Dashboard
 - **Server Configuration**: Add and configure FL servers with ports and security settings
 - **Client Management**: Manage FL clients with GPU specifications
 - **Admin Roles**: Assign and manage project administrators
-- **NVFlare Integration**: Direct integration with `nvflare provision` CLI tool
 
 ### 🎨 **Modern UI/UX**
 - **Material-UI Design**: Beautiful, responsive interface using Material-UI v5
