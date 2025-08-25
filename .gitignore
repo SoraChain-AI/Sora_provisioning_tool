@@ -1,0 +1,16 @@
+workspace/
+test*.py
+test*.yml
+test*.json
+test*.txt
+test*.csv
+test*.pdf
+test*.docx
+test*.doc
+test*.xls
+test*.xlsx
+test*.pptx
+test*.ppt
+test*.pps
+test*.ppsx
+test*.ppsx
