@@ -26,8 +26,8 @@ class Project(db.Model):
     description = db.Column(db.String(512))
     api_version = db.Column(db.Integer, default=3)
     scheme = db.Column(db.String(64), default='grpc')
-    overseer_agent_path = db.Column(db.String(256), default='nvflare.ha.dummy_overseer_agent.DummyOverseerAgent')
-    overseer_agent_args = db.Column(db.Text, default='{"sp_end_point": "FLServer.com:8002:8003"}')
+    server_name = db.Column(db.String(128), nullable=False, default='FLServer.com')
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     ha_mode = db.Column(db.Boolean, default=False)
     frozen = db.Column(db.Boolean, default=False)
     public = db.Column(db.Boolean, default=False)
@@ -98,12 +98,15 @@ def init_default_data():
                 approval_state=1
             )
             db.session.add(admin_user)
+            db.session.flush()  # Get the admin user ID first
             
             # Create default project
             project = Project(
                 name='Example Sorachain Project',
                 description='Default Sorachain project',
-                scheme='grpc'
+                scheme='grpc',
+                server_name='FLServer.com',
+                created_by=admin_user.id
             )
             db.session.add(project)
             db.session.flush()  # Get the project ID

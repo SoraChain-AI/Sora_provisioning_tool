@@ -225,41 +225,83 @@ def login():
 @jwt_required()
 def get_projects():
     """Get all projects"""
-    projects = Project.query.all()
-    return jsonify({
-        'projects': [{
-            'id': project.id,
-            'name': project.name,
-            'description': project.description,
-            'scheme': project.scheme,
-            'ha_mode': project.ha_mode,
-            'frozen': project.frozen,
-            'public': project.public,
-            'created_at': project.created_at.isoformat()
-        } for project in projects]
-    })
+    try:
+        print("Getting projects...")
+        projects = Project.query.all()
+        print(f"Found {len(projects)} projects")
+        
+        project_list = []
+        for project in projects:
+            try:
+                project_data = {
+                    'id': project.id,
+                    'name': project.name,
+                    'description': project.description,
+                    'scheme': project.scheme,
+                    'ha_mode': project.ha_mode,
+                    'frozen': project.frozen,
+                    'public': project.public,
+                    'server_name': project.server_name,
+                    'created_by': project.created_by,
+                    'created_at': project.created_at.isoformat()
+                }
+                project_list.append(project_data)
+                print(f"Processed project: {project.name}")
+            except Exception as e:
+                print(f"Error processing project {project.id}: {e}")
+                continue
+        
+        print(f"Returning {len(project_list)} projects")
+        response = jsonify({'projects': project_list})
+        return add_cors_headers(response)
+        
+    except Exception as e:
+        print(f"Error in get_projects: {e}")
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return add_cors_headers(response)
 
 @api_bp.route('/projects', methods=['POST'])
 @jwt_required()
 def create_project():
     """Create new project"""
-    data = request.get_json()
-    
-    project = Project(
-        name=data['name'],
-        description=data.get('description', ''),
-        scheme=data.get('scheme', 'grpc'),
-        ha_mode=data.get('ha_mode', False),
-        frozen=data.get('frozen', False),
-        public=data.get('public', False),
-        overseer_agent_path=data.get('overseer_agent_path', 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent'),
-        overseer_agent_args=data.get('overseer_agent_args', '{"sp_end_point": "FLServer.com:8002:8003"}')
-    )
-    
-    db.session.add(project)
-    db.session.commit()
-    
-    return jsonify({'message': 'Project created successfully', 'project_id': project.id})
+    try:
+        print(f"Creating project - request headers: {dict(request.headers)}")
+        # Get current user
+        current_user_email = get_jwt_identity()
+        print(f"Current user email from JWT: {current_user_email}")
+        current_user = User.query.filter_by(email=current_user_email).first()
+        print(f"Current user found: {current_user}")
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        data = request.get_json()
+        
+        project = Project(
+            name=data['name'],
+            description=data.get('description', ''),
+            scheme=data.get('scheme', 'grpc'),
+            ha_mode=data.get('ha_mode', False),
+            frozen=data.get('frozen', False),
+            public=data.get('public', False),
+            server_name=data.get('server_name', 'FLServer.com'),
+            created_by=current_user.id
+        )
+        
+        db.session.add(project)
+        db.session.commit()
+        
+        return jsonify({'message': 'Project created successfully', 'project_id': project.id})
+        
+    except Exception as e:
+        print(f"Error creating project: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return response
 
 @api_bp.route('/projects/<int:project_id>', methods=['GET'])
 @jwt_required()
@@ -270,6 +312,9 @@ def get_project(project_id):
     clients = Client.query.filter_by(project_id=project_id).all()
     admins = Admin.query.filter_by(project_id=project_id).all()
     
+    # Get creator information
+    creator = User.query.get(project.created_by)
+    
     return jsonify({
         'project': {
             'id': project.id,
@@ -279,8 +324,10 @@ def get_project(project_id):
             'ha_mode': project.ha_mode,
             'frozen': project.frozen,
             'public': project.public,
-            'overseer_agent_path': project.overseer_agent_path,
-            'overseer_agent_args': project.overseer_agent_args,
+            'server_name': project.server_name,
+            'created_by': project.created_by,
+            'creator_name': creator.name if creator else 'Unknown',
+            'creator_email': creator.email if creator else 'Unknown',
             'created_at': project.created_at.isoformat()
         },
         'servers': [{
@@ -310,6 +357,63 @@ def get_project(project_id):
         } for admin in admins]
     })
 
+@api_bp.route('/projects/<int:project_id>', methods=['PUT'])
+@jwt_required()
+def update_project(project_id):
+    """Update project details - only project creator can update"""
+    try:
+        # Get current user
+        current_user_id = get_jwt_identity()
+        current_user = User.query.get(current_user_id)
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can update this project'})
+            response.status_code = 403
+            return response
+        
+        data = request.get_json()
+        
+        # Update project fields
+        if 'name' in data:
+            project.name = data['name']
+        if 'description' in data:
+            project.description = data['description']
+        if 'scheme' in data:
+            project.scheme = data['scheme']
+        if 'server_name' in data:
+            project.server_name = data['server_name']
+        if 'ha_mode' in data:
+            project.ha_mode = data['ha_mode']
+        if 'frozen' in data:
+            project.frozen = data['frozen']
+        if 'public' in data:
+            project.public = data['public']
+        
+        project.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({'message': 'Project updated successfully'})
+        
+    except Exception as e:
+        print(f"Error updating project: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return response
+
 @api_bp.route('/projects/<int:project_id>/servers', methods=['POST'])
 @jwt_required()
 def add_server(project_id):
@@ -335,6 +439,21 @@ def add_server(project_id):
         if not project:
             response = jsonify({'error': 'Project not found'})
             response.status_code = 404
+            return response
+        
+        # Check if user has permission to modify this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
             return response
         
         server = Server(
@@ -364,37 +483,97 @@ def add_server(project_id):
 @jwt_required()
 def update_server(project_id, server_id):
     """Update server in project"""
-    data = request.get_json()
-    server = Server.query.filter_by(id=server_id, project_id=project_id).first()
+    try:
+        # Check if user has permission to modify this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
+            return response
+        
+        data = request.get_json()
+        server = Server.query.filter_by(id=server_id, project_id=project_id).first()
+        
+        if not server:
+            response = jsonify({'error': 'Server not found'})
+            response.status_code = 404
+            return response
     
-    if not server:
-        response = jsonify({'error': 'Server not found'})
-        response.status_code = 404
+            server.name = data['name']
+        server.org = data['org']
+        server.fed_learn_port = data.get('fed_learn_port', 8002)
+        server.admin_port = data.get('admin_port', 8003)
+        server.connection_security = data.get('connection_security', 'mtls')
+        
+        db.session.commit()
+        return jsonify({'message': 'Server updated successfully'})
+        
+    except Exception as e:
+        print(f"Error updating server: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
         return response
-    
-    server.name = data['name']
-    server.org = data['org']
-    server.fed_learn_port = data.get('fed_learn_port', 8002)
-    server.admin_port = data.get('admin_port', 8003)
-    server.connection_security = data.get('connection_security', 'mtls')
-    
-    db.session.commit()
-    return jsonify({'message': 'Server updated successfully'})
 
 @api_bp.route('/projects/<int:project_id>/servers/<int:server_id>', methods=['DELETE'])
 @jwt_required()
 def delete_server(project_id, server_id):
     """Delete server from project"""
-    server = Server.query.filter_by(id=server_id, project_id=project_id).first()
+    try:
+        # Check if user has permission to modify this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
+            return response
+        
+        server = Server.query.filter_by(id=server_id, project_id=project_id).first()
+        
+        if not server:
+            response = jsonify({'error': 'Server not found'})
+            response.status_code = 403
+            return response
     
-    if not server:
-        response = jsonify({'error': 'Server not found'})
-        response.status_code = 404
+            db.session.delete(server)
+        db.session.commit()
+        return jsonify({'message': 'Server deleted successfully'})
+        
+    except Exception as e:
+        print(f"Error deleting server: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
         return response
-    
-    db.session.delete(server)
-    db.session.commit()
-    return jsonify({'message': 'Server deleted successfully'})
 
 @api_bp.route('/projects/<int:project_id>/clients', methods=['POST'])
 @jwt_required()

@@ -36,17 +36,28 @@ function Projects() {
     const [error, setError] = useState('');
     const [openDialog, setOpenDialog] = useState(false);
     const [editingProject, setEditingProject] = useState(null);
+    const [currentUser, setCurrentUser] = useState(null);
     const [formData, setFormData] = useState({
         name: '',
         description: '',
         scheme: 'grpc',
-        overseer_agent_path: 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-        overseer_agent_args: '{"sp_end_point": "FLServer.com:8002:8003"}',
+        server_name: 'FLServer.com',
     });
 
     useEffect(() => {
         loadProjects();
+        // Get current user from localStorage or context
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        setCurrentUser(user);
     }, []);
+    
+    const canEditProject = (project) => {
+        if (!currentUser) return false;
+        // Admin can edit any project
+        if (currentUser.role === 'admin') return true;
+        // Project creator can edit their own project
+        return project.created_by === currentUser.id;
+    };
 
     const loadProjects = async () => {
         try {
@@ -68,8 +79,7 @@ function Projects() {
                 name: project.name,
                 description: project.description || '',
                 scheme: project.scheme || 'grpc',
-                overseer_agent_path: project.overseer_agent_path || 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-                overseer_agent_args: project.overseer_agent_args || '{"sp_end_point": "FLServer.com:8002:8003"}',
+                server_name: project.server_name || 'FLServer.com',
             });
         } else {
             setEditingProject(null);
@@ -77,8 +87,7 @@ function Projects() {
                 name: '',
                 description: '',
                 scheme: 'grpc',
-                overseer_agent_path: 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-                overseer_agent_args: '{"sp_end_point": "FLServer.com:8002:8003"}',
+                server_name: 'FLServer.com',
             });
         }
         setOpenDialog(true);
@@ -91,8 +100,7 @@ function Projects() {
             name: '',
             description: '',
             scheme: 'grpc',
-            overseer_agent_path: 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-            overseer_agent_args: '{"sp_end_point": "FLServer.com:8002:8003"}',
+            server_name: 'FLServer.com',
         });
     };
 
@@ -213,6 +221,10 @@ function Projects() {
                                     <Typography variant="body2" color="text.secondary" mb={2}>
                                         {project.description || 'No description available'}
                                     </Typography>
+                                    
+                                    <Typography variant="caption" color="text.secondary" display="block" mb={2}>
+                                        Created by: {project.creator_name || 'Unknown'} ({project.creator_email || 'Unknown'})
+                                    </Typography>
 
                                     <Box display="flex" gap={1} mb={3}>
                                         <Chip
@@ -233,14 +245,16 @@ function Projects() {
                                     </Box>
 
                                     <Box display="flex" gap={1} flexWrap="wrap">
-                                        <Tooltip title="Edit Project">
-                                            <IconButton
-                                                size="small"
-                                                onClick={() => handleOpenDialog(project)}
-                                            >
-                                                <EditIcon />
-                                            </IconButton>
-                                        </Tooltip>
+                                        {canEditProject(project) && (
+                                            <Tooltip title="Edit Project">
+                                                <IconButton
+                                                    size="small"
+                                                    onClick={() => handleOpenDialog(project)}
+                                                >
+                                                    <EditIcon />
+                                                </IconButton>
+                                            </Tooltip>
+                                        )}
 
                                         <Tooltip title="Provision Project">
                                             <IconButton
@@ -262,15 +276,17 @@ function Projects() {
                                             </IconButton>
                                         </Tooltip>
 
-                                        <Tooltip title="Delete Project">
-                                            <IconButton
-                                                size="small"
-                                                color="error"
-                                                onClick={() => handleDelete(project.id)}
-                                            >
-                                                <DeleteIcon />
-                                            </IconButton>
-                                        </Tooltip>
+                                        {canEditProject(project) && (
+                                            <Tooltip title="Delete Project">
+                                                <IconButton
+                                                    size="small"
+                                                    color="error"
+                                                    onClick={() => handleDelete(project.id)}
+                                                >
+                                                    <DeleteIcon />
+                                                </IconButton>
+                                            </Tooltip>
+                                        )}
                                     </Box>
                                 </CardContent>
                             </Card>
@@ -323,20 +339,11 @@ function Projects() {
                             <Grid item xs={12} sm={6}>
                                 <TextField
                                     fullWidth
-                                    label="Overseer Agent Path"
-                                    value={formData.overseer_agent_path}
-                                    onChange={(e) => setFormData({ ...formData, overseer_agent_path: e.target.value })}
-                                />
-                            </Grid>
-                            <Grid item xs={12}>
-                                <TextField
-                                    fullWidth
-                                    label="Overseer Agent Args (JSON)"
-                                    value={formData.overseer_agent_args}
-                                    onChange={(e) => setFormData({ ...formData, overseer_agent_args: e.target.value })}
-                                    multiline
-                                    rows={2}
-                                    helperText="Enter as valid JSON"
+                                    label="Server Name"
+                                    value={formData.server_name}
+                                    onChange={(e) => setFormData({ ...formData, server_name: e.target.value })}
+                                    required
+                                    helperText="This name will be used in server configuration files"
                                 />
                             </Grid>
                         </Grid>

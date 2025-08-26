@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NVFlare Provisioning Dashboard Runner
+Sorachain Provisioning Dashboard Runner
 """
 
 import argparse

@@ -44,7 +44,7 @@ class NVFlareProvisioningService:
             'description': project.description,
             'participants': [
                 {
-                    'name': primary_server.name,
+                    'name': project.server_name,
                     'type': 'server',
                     'org': primary_server.org,
                     'fed_learn_port': primary_server.fed_learn_port,
@@ -64,9 +64,11 @@ class NVFlareProvisioningService:
                         'config_folder': 'config',
                         'scheme': project.scheme,
                         'overseer_agent': {
-                            'path': project.overseer_agent_path,
+                            'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
                             'overseer_exists': False,
-                            'args': json.loads(project.overseer_agent_args)
+                            'args': {
+                                'sp_end_point': f"{project.server_name}:8002:8003"
+                            }
                         }
                     }
                 },

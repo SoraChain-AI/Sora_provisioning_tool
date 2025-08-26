@@ -211,14 +211,6 @@ After starting the dashboard:
 - Secure API endpoints
 - CORS configuration
 
-## 🚀 NVFlare Integration
-
-The dashboard directly integrates with the NVFlare CLI provisioning tool:
-
-1. **Configuration Generation**: Creates `project.yml` from database data
-2. **CLI Execution**: Calls `nvflare provision -p project.yml -w workspace`
-3. **Startup Kit Generation**: Processes generated files and creates downloadable packages
-4. **Status Monitoring**: Tracks provisioning progress and workspace status
 
 ## 📊 Monitoring and Logs
 
@@ -286,14 +278,6 @@ npm start
    # Restart backend
    ```
 
-4. **NVFlare CLI Issues**
-   ```bash
-   # Verify NVFlare installation
-   nvflare --version
-   
-   # Check PATH and environment
-   which nvflare
-   ```
 
 ### **Logs and Debugging**
 ```bash
