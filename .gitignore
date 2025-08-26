@@ -35,6 +35,7 @@ FL/
 *.sqlite3
 instance/provisioning_dashboard.db
 instance/
+./instance/
 
 # Workspace and Provisioning Directories
 workspace/

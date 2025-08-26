@@ -45,7 +45,22 @@ function App() {
     useEffect(() => {
         // Check if user is already logged in
         const token = localStorage.getItem('access_token');
-        if (token) {
+        const storedUser = localStorage.getItem('user');
+
+        if (token && storedUser) {
+            try {
+                const userData = JSON.parse(storedUser);
+                setUser(userData);
+                setIsAuthenticated(true);
+                setLoading(false);
+            } catch (error) {
+                console.error('Error parsing stored user data:', error);
+                localStorage.removeItem('user');
+                localStorage.removeItem('access_token');
+                setLoading(false);
+            }
+        } else if (token) {
+            // Token exists but no user data, try to validate token
             AuthService.validateToken(token)
                 .then((userData) => {
                     setUser(userData);
@@ -64,12 +79,14 @@ function App() {
 
     const handleLogin = (token, userData) => {
         localStorage.setItem('access_token', token);
+        localStorage.setItem('user', JSON.stringify(userData));
         setUser(userData);
         setIsAuthenticated(true);
     };
 
     const handleLogout = () => {
         localStorage.removeItem('access_token');
+        localStorage.removeItem('user');
         setUser(null);
         setIsAuthenticated(false);
     };

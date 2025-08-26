@@ -50,7 +50,7 @@ function Projects() {
         const user = JSON.parse(localStorage.getItem('user') || '{}');
         setCurrentUser(user);
     }, []);
-    
+
     const canEditProject = (project) => {
         if (!currentUser) return false;
         // Admin can edit any project
@@ -221,7 +221,7 @@ function Projects() {
                                     <Typography variant="body2" color="text.secondary" mb={2}>
                                         {project.description || 'No description available'}
                                     </Typography>
-                                    
+
                                     <Typography variant="caption" color="text.secondary" display="block" mb={2}>
                                         Created by: {project.creator_name || 'Unknown'} ({project.creator_email || 'Unknown'})
                                     </Typography>
@@ -256,14 +256,17 @@ function Projects() {
                                             </Tooltip>
                                         )}
 
-                                        <Tooltip title="Provision Project">
-                                            <IconButton
-                                                size="small"
-                                                color="success"
-                                                onClick={() => handleProvision(project.id)}
-                                            >
-                                                <ProvisionIcon />
-                                            </IconButton>
+                                        <Tooltip title={canEditProject(project) ? "Provision Project" : "Only project creators can provision projects"}>
+                                            <span>
+                                                <IconButton
+                                                    size="small"
+                                                    color="success"
+                                                    onClick={() => handleProvision(project.id)}
+                                                    disabled={!canEditProject(project)}
+                                                >
+                                                    <ProvisionIcon />
+                                                </IconButton>
+                                            </span>
                                         </Tooltip>
 
                                         <Tooltip title="Download Server Kit">

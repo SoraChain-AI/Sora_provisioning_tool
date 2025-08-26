@@ -49,10 +49,23 @@ function ProjectDetail() {
   const [dialogType, setDialogType] = useState('');
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({});
+  const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
     loadProject();
+    // Get current user from localStorage
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    setCurrentUser(user);
   }, [id]);
+
+  const canEditProject = () => {
+    if (!currentUser || !project) return false;
+
+    // Admin can edit any project
+    if (currentUser.role === 'admin') return true;
+    // Project creator can edit their own project
+    return project.created_by === currentUser.id;
+  };
 
   const loadProject = async () => {
     try {
@@ -70,7 +83,7 @@ function ProjectDetail() {
   const handleOpenDialog = (type, item = null) => {
     setDialogType(type);
     setEditingItem(item);
-    
+
     if (item) {
       setFormData({
         name: item.name,
@@ -367,6 +380,8 @@ function ProjectDetail() {
             variant="outlined"
             startIcon={<ProvisionIcon />}
             onClick={handleProvision}
+            disabled={!canEditProject()}
+            title={!canEditProject() ? "Only project creators can provision projects" : ""}
           >
             Provision Project
           </Button>
@@ -374,6 +389,8 @@ function ProjectDetail() {
             variant="contained"
             startIcon={<DownloadIcon />}
             onClick={() => handleDownload('server')}
+            disabled={!canEditProject()}
+            title={!canEditProject() ? "Only project creators can download server kits" : ""}
           >
             Download Server Kit
           </Button>
@@ -420,24 +437,24 @@ function ProjectDetail() {
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-          <Tab 
-            label={`Servers (${project.servers?.length || 0})`} 
-            icon={<ServerIcon />} 
+          <Tab
+            label={`Servers (${project.servers?.length || 0})`}
+            icon={<ServerIcon />}
             iconPosition="start"
           />
-          <Tab 
-            label={`Clients (${project.clients?.length || 0})`} 
-            icon={<ClientIcon />} 
+          <Tab
+            label={`Clients (${project.clients?.length || 0})`}
+            icon={<ClientIcon />}
             iconPosition="start"
           />
-          <Tab 
-            label={`Admins (${project.admins?.length || 0})`} 
-            icon={<AdminIcon />} 
+          <Tab
+            label={`Admins (${project.admins?.length || 0})`}
+            icon={<AdminIcon />}
             iconPosition="start"
           />
-          <Tab 
-            label="Applications" 
-            icon={<ApplicationsIcon />} 
+          <Tab
+            label="Applications"
+            icon={<ApplicationsIcon />}
             iconPosition="start"
           />
         </Tabs>
@@ -452,6 +469,8 @@ function ProjectDetail() {
               variant="contained"
               startIcon={<AddIcon />}
               onClick={() => handleOpenDialog('server')}
+              disabled={!canEditProject()}
+              title={!canEditProject() ? "Only project creators can add servers" : ""}
             >
               Add Server
             </Button>
@@ -473,16 +492,20 @@ function ProjectDetail() {
                       <Chip label={`Admin: ${server.admin_port}`} size="small" variant="outlined" />
                     </Box>
                     <Box display="flex" gap={1}>
-                      <Tooltip title="Edit Server">
-                        <IconButton size="small" onClick={() => handleOpenDialog('server', server)}>
-                          <EditIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Delete Server">
-                        <IconButton size="small" color="error" onClick={() => handleDelete('server', server.id)}>
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
+                      {canEditProject() && (
+                        <Tooltip title="Edit Server">
+                          <IconButton size="small" onClick={() => handleOpenDialog('server', server)}>
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {canEditProject() && (
+                        <Tooltip title="Delete Server">
+                          <IconButton size="small" color="error" onClick={() => handleDelete('server', server.id)}>
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Box>
                   </CardContent>
                 </Card>
@@ -500,6 +523,8 @@ function ProjectDetail() {
               variant="contained"
               startIcon={<AddIcon />}
               onClick={() => handleOpenDialog('client')}
+              disabled={!canEditProject()}
+              title={!canEditProject() ? "Only project creators can add clients" : ""}
             >
               Add Client
             </Button>
@@ -521,16 +546,20 @@ function ProjectDetail() {
                       <Chip label={`${client.gpu_memory}GB`} size="small" variant="outlined" />
                     </Box>
                     <Box display="flex" gap={1}>
-                      <Tooltip title="Edit Client">
-                        <IconButton size="small" onClick={() => handleOpenDialog('client', client)}>
-                          <EditIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Delete Client">
-                        <IconButton size="small" color="error" onClick={() => handleDelete('client', client.id)}>
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
+                      {canEditProject() && (
+                        <Tooltip title="Edit Client">
+                          <IconButton size="small" onClick={() => handleOpenDialog('client', client)}>
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {canEditProject() && (
+                        <Tooltip title="Delete Client">
+                          <IconButton size="small" color="error" onClick={() => handleDelete('client', client.id)}>
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Box>
                   </CardContent>
                 </Card>
@@ -548,6 +577,8 @@ function ProjectDetail() {
               variant="contained"
               startIcon={<AddIcon />}
               onClick={() => handleOpenDialog('admin')}
+              disabled={!canEditProject()}
+              title={!canEditProject() ? "Only project creators can add admins" : ""}
             >
               Add Admin
             </Button>
@@ -563,16 +594,20 @@ function ProjectDetail() {
                     </Typography>
                     <Chip label={admin.role} size="small" color="secondary" />
                     <Box display="flex" gap={1} mt={2}>
-                      <Tooltip title="Edit Admin">
-                        <IconButton size="small" onClick={() => handleOpenDialog('admin', admin)}>
-                          <EditIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Delete Admin">
-                        <IconButton size="small" color="error" onClick={() => handleDelete('admin', admin.id)}>
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
+                      {canEditProject() && (
+                        <Tooltip title="Edit Admin">
+                          <IconButton size="small" onClick={() => handleOpenDialog('admin', admin)}>
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {canEditProject() && (
+                        <Tooltip title="Delete Admin">
+                          <IconButton size="small" color="error" onClick={() => handleDelete('admin', admin.id)}>
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Box>
                   </CardContent>
                 </Card>
