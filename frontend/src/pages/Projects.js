@@ -27,6 +27,7 @@ import {
     Delete as DeleteIcon,
     Download as DownloadIcon,
     PlayArrow as ProvisionIcon,
+    Info as InfoIcon,
 } from '@mui/icons-material';
 import { ProjectService } from '../services/projectService';
 
@@ -129,6 +130,11 @@ function Projects() {
                 console.error(err);
             }
         }
+    };
+
+    const handleViewDetails = (projectId) => {
+        // Navigate to project detail page
+        window.location.href = `/projects/${projectId}`;
     };
 
     const handleProvision = async (projectId) => {
@@ -245,6 +251,16 @@ function Projects() {
                                     </Box>
 
                                     <Box display="flex" gap={1} flexWrap="wrap">
+                                        <Tooltip title="View Project Details">
+                                            <IconButton
+                                                size="small"
+                                                color="info"
+                                                onClick={() => handleViewDetails(project.id)}
+                                            >
+                                                <InfoIcon />
+                                            </IconButton>
+                                        </Tooltip>
+
                                         {canEditProject(project) && (
                                             <Tooltip title="Edit Project">
                                                 <IconButton

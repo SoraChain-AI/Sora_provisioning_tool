@@ -449,6 +449,52 @@ def update_project(project_id):
         response.status_code = 500
         return response
 
+@api_bp.route('/projects/<int:project_id>', methods=['DELETE'])
+@jwt_required()
+def delete_project(project_id):
+    """Delete project - only project creator or system admin can delete"""
+    try:
+        # Get current user
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator or system admin can delete this project'})
+            response.status_code = 403
+            return response
+        
+        # Delete all related data first
+        Server.query.filter_by(project_id=project_id).delete()
+        Client.query.filter_by(project_id=project_id).delete()
+        Admin.query.filter_by(project_id=project_id).delete()
+        UserApplication.query.filter_by(project_id=project_id).delete()
+        
+        # Delete the project
+        db.session.delete(project)
+        db.session.commit()
+        
+        return jsonify({'message': 'Project deleted successfully'})
+        
+    except Exception as e:
+        print(f"Error deleting project: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return response
+
 @api_bp.route('/projects/<int:project_id>/servers', methods=['POST'])
 @jwt_required()
 def add_server(project_id):
