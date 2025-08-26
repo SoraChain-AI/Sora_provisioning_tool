@@ -103,6 +103,11 @@ export const ProjectService = {
         return response.data;
     },
 
+    async reprovisionProject(projectId) {
+        const response = await api.post(`/reprovision/${projectId}`);
+        return response.data;
+    },
+
     async getProjectStatus(projectId) {
         const response = await api.get(`/status/${projectId}`);
         return response.data;
@@ -141,6 +146,25 @@ export const ProjectService = {
             console.error('Error checking provisioning status:', error);
             return { status: 'not_provisioned' };
         }
+    },
+
+    // Download all startup kits at once
+    async downloadAllStartupKits(projectId) {
+        const response = await api.get(`/download-all/${projectId}`, {
+            responseType: 'blob',
+        });
+
+        // Create download link
+        const downloadUrl = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.setAttribute('download', `project_${projectId}_all_startup_kits.zip`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+
+        return response.data;
     },
 };
 

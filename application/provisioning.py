@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 NVFlare Provisioning Service
-Integrates with the NVFlare CLI provisioning tool
+Integrates with the NVFlare CLI provisioning tool using proper workflow
 """
 
 import os
@@ -11,6 +11,7 @@ import yaml
 import json
 import zipfile
 import io
+import shutil
 from pathlib import Path
 from .models import Project, Server, Client, Admin
 
@@ -21,53 +22,40 @@ class NVFlareProvisioningService:
         self.workspace_dir = workspace_dir
         os.makedirs(workspace_dir, exist_ok=True)
     
-    def generate_project_yml(self, project_id):
-        """Generate project.yml file from database configuration"""
-        project = Project.query.get(project_id)
-        if not project:
-            raise ValueError(f"Project {project_id} not found")
+    def _load_base_config(self):
+        """Load the base project.yml configuration"""
+        base_config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'project.yml')
+        if not os.path.exists(base_config_path):
+            # Fallback to creating a basic config
+            return self._create_basic_config()
         
-        servers = Server.query.filter_by(project_id=project_id).all()
-        clients = Client.query.filter_by(project_id=project_id).all()
-        admins = Admin.query.filter_by(project_id=project_id).all()
-        
-        # NVFlare only supports one server per project, so we'll use the first server
-        if not servers:
-            raise ValueError(f"Project {project_id} must have at least one server")
-        
-        primary_server = servers[0]  # Use the first server as primary
-        
-        # Build project configuration with only the primary server
-        project_config = {
-            'api_version': project.api_version,
-            'name': project.name,
-            'description': project.description,
-            'participants': [
-                {
-                    'name': project.server_name,
-                    'type': 'server',
-                    'org': primary_server.org,
-                    'fed_learn_port': primary_server.fed_learn_port,
-                    'admin_port': primary_server.admin_port
-                }
-            ],
+        with open(base_config_path, 'r') as f:
+            return yaml.safe_load(f)
+    
+    def _create_basic_config(self):
+        """Create a basic NVFlare configuration if base config doesn't exist"""
+        return {
+            'api_version': 3,
+            'name': 'sorachain_project',
+            'description': 'Sorachain Federated Learning Project',
+            'participants': [],
             'builders': [
                 {
                     'path': 'nvflare.lighter.impl.workspace.WorkspaceBuilder',
                     'args': {
-                        'template_file': ['master_template.yml']  # Use only master template
+                        'template_file': ['master_template.yml']
                     }
                 },
                 {
                     'path': 'nvflare.lighter.impl.static_file.StaticFileBuilder',
                     'args': {
                         'config_folder': 'config',
-                        'scheme': project.scheme,
+                        'scheme': 'grpc',
                         'overseer_agent': {
                             'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
                             'overseer_exists': False,
                             'args': {
-                                'sp_end_point': f"{project.server_name}:8002:8003"
+                                'sp_end_point': 'FLServer:8002:8003'
                             }
                         }
                     }
@@ -82,22 +70,84 @@ class NVFlareProvisioningService:
                 }
             ]
         }
-        
-        return project_config, {
-            'additional_servers': servers[1:] if len(servers) > 1 else [],
-            'clients': clients,
-            'admins': admins
-        }
     
-    def call_nvflare_provision(self, project_id, custom_workspace=None):
-        """Call the NVFlare CLI provision command"""
+    def _update_base_config(self, base_config, project, servers, clients, admins):
+        """Update base configuration with project-specific details"""
+        # Update project metadata
+        base_config['name'] = project.name
+        base_config['description'] = project.description
+        
+        # Clear existing participants and add new ones
+        base_config['participants'] = []
+        
+        # Add servers
+        for server in servers:
+            base_config['participants'].append({
+                'name': server.name,
+                'host': server.name,
+                'type': 'server',
+                'org': server.org,
+                'fed_learn_port': server.fed_learn_port,
+                'admin_port': server.admin_port
+            })
+        
+        # Add clients
+        for client in clients:
+            base_config['participants'].append({
+                'name': client.name,
+                'host': client.name,
+                'type': 'client',
+                'org': client.org
+            })
+        
+        # Add admins
+        for admin in admins:
+            base_config['participants'].append({
+                'name': admin.email,
+                'host': servers[0].name if servers else 'FLServer',
+                'type': 'admin',
+                'org': admin.org,
+                'role': admin.role
+            })
+        
+        # Update overseer agent endpoint if servers exist
+        if servers:
+            primary_server = servers[0]
+            for builder in base_config['builders']:
+                if builder.get('path') == 'nvflare.lighter.impl.static_file.StaticFileBuilder':
+                    if 'overseer_agent' in builder.get('args', {}):
+                        builder['args']['overseer_agent']['args']['sp_end_point'] = f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
+        
+        return base_config
+    
+    def call_nvflare_provision(self, project_id, custom_workspace=None, force_reprovision=False):
+        """Call the NVFlare CLI provision command using base config + updates"""
         project = Project.query.get(project_id)
         if not project:
             raise ValueError(f"Project {project_id} not found")
         
-        # Generate project.yml with primary server only
-        project_config, additional_participants = self.generate_project_yml(project_id)
-        print(f"Generated project config: {project_config}")
+        # Check if already provisioned and not forcing reprovision
+        if not force_reprovision:
+            existing_workspace = self._get_existing_workspace(project_id)
+            if existing_workspace:
+                print(f"Project {project_id} already provisioned, using existing workspace: {existing_workspace}")
+                return existing_workspace
+        
+        servers = Server.query.filter_by(project_id=project_id).all()
+        clients = Client.query.filter_by(project_id=project_id).all()
+        admins = Admin.query.filter_by(project_id=project_id).all()
+        
+        if not servers:
+            raise ValueError(f"Project {project_id} must have at least one server")
+        
+        # Load base configuration
+        base_config = self._load_base_config()
+        print(f"Loaded base config: {base_config['name']}")
+        
+        # Update with project-specific details
+        project_config = self._update_base_config(base_config, project, servers, clients, admins)
+        print(f"Updated project config: {project_config['name']}")
+        print(f"Participants: {len(project_config['participants'])} total")
         
         # Create temporary project.yml file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
@@ -111,7 +161,7 @@ class NVFlareProvisioningService:
             workspace = custom_workspace or os.path.join(self.workspace_dir, f"project_{project_id}")
             print(f"Target workspace: {workspace}")
             
-            # Call nvflare provision command for the primary server
+            # Call nvflare provision command - this will generate ALL configs together
             cmd = [
                 '/home/franky/FL/bin/nvflare', 'provision',
                 '-p', project_file,
@@ -120,7 +170,6 @@ class NVFlareProvisioningService:
             
             print(f"Executing: {' '.join(cmd)}")
             print(f"Current working directory: {os.getcwd()}")
-            print(f"Environment PATH: {os.environ.get('PATH', 'Not set')}")
             
             # Ensure the virtual environment is in the PATH
             env = os.environ.copy()
@@ -148,10 +197,6 @@ class NVFlareProvisioningService:
             # Check if workspace directory exists
             if not os.path.exists(workspace):
                 print(f"Warning: Workspace directory {workspace} does not exist after command execution")
-                # List contents of parent directory
-                parent_dir = os.path.dirname(workspace)
-                if os.path.exists(parent_dir):
-                    print(f"Contents of {parent_dir}: {os.listdir(parent_dir)}")
                 return workspace
             
             # Find the actual workspace directory created by NVFlare
@@ -179,10 +224,7 @@ class NVFlareProvisioningService:
                 return workspace
             
             print(f"Actual workspace found: {actual_workspace}")
-            
-            # Now add additional participants using the appropriate flags
-            self._add_additional_participants(actual_workspace, additional_participants)
-            
+            print(f"Workspace contents: {os.listdir(actual_workspace)}")
             return actual_workspace
             
         finally:
@@ -190,112 +232,21 @@ class NVFlareProvisioningService:
             os.unlink(project_file)
             print(f"Cleaned up temporary file: {project_file}")
     
-    def _add_additional_participants(self, workspace, additional_participants):
-        """Add additional participants to the provisioned workspace"""
-        print(f"Adding additional participants to {workspace}")
+    def _get_existing_workspace(self, project_id):
+        """Get existing workspace if project is already provisioned"""
+        workspace = os.path.join(self.workspace_dir, f"project_{project_id}")
+        if not os.path.exists(workspace):
+            return None
         
-        # Add additional clients
-        for client in additional_participants['clients']:
-            self._add_client(workspace, client)
+        # Look for the prod_00 directory
+        for item in os.listdir(workspace):
+            project_dir = os.path.join(workspace, item)
+            if os.path.isdir(project_dir):
+                prod_dir = os.path.join(project_dir, 'prod_00')
+                if os.path.exists(prod_dir):
+                    return prod_dir
         
-        # Add additional admins
-        for admin in additional_participants['admins']:
-            self._add_user(workspace, admin)
-        
-        # Note: Additional servers are not supported by NVFlare
-        if additional_participants['additional_servers']:
-            print(f"Warning: {len(additional_participants['additional_servers'])} additional servers cannot be added (NVFlare limitation)")
-    
-    def _add_client(self, workspace, client):
-        """Add a client to the provisioned workspace"""
-        try:
-            # Create client configuration
-            client_config = {
-                'name': client.name,
-                'type': 'client',
-                'org': client.org
-            }
-            if client.description:
-                client_config['description'] = client.description
-            
-            # Create temporary client file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
-                yaml.dump(client_config, f, default_flow_style=False)
-                client_file = f.name
-            
-            try:
-                # Add client using NVFlare
-                cmd = [
-                    '/home/franky/FL/bin/nvflare', 'provision',
-                    '--add_client', client_file,
-                    '-w', workspace
-                ]
-                
-                print(f"Adding client {client.name}: {' '.join(cmd)}")
-                
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=os.getcwd(),
-                    env=os.environ.copy()
-                )
-                
-                if result.returncode == 0:
-                    print(f"Successfully added client {client.name}")
-                else:
-                    print(f"Failed to add client {client.name}: {result.stderr}")
-                    
-            finally:
-                os.unlink(client_file)
-                
-        except Exception as e:
-            print(f"Error adding client {client.name}: {e}")
-    
-    def _add_user(self, workspace, admin):
-        """Add an admin user to the provisioned workspace"""
-        try:
-            # Create user configuration
-            user_config = {
-                'name': admin.email.split('@')[0],
-                'type': 'admin',
-                'org': admin.org,
-                'role': admin.role
-            }
-            
-            # Create temporary user file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
-                yaml.dump(user_config, f, default_flow_style=False)
-                user_file = f.name
-            
-            try:
-                # Add user using NVFlare
-                cmd = [
-                    '/home/franky/FL/bin/nvflare', 'provision',
-                    '--add_user', user_file,
-                    '-w', workspace
-                ]
-                
-                print(f"Adding user {admin.email}: {' '.join(cmd)}")
-                
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=os.getcwd(),
-                    env=os.environ.copy()
-                )
-                
-                if result.returncode == 0:
-                    print(f"Successfully added user {admin.email}")
-                else:
-                    print(f"Failed to add user {admin.email}: {result.stderr}")
-                    
-            finally:
-                os.unlink(user_file)
-                
-        except Exception as e:
-            print(f"Error adding user {admin.email}: {e}")
+        return None
     
     def generate_startup_kit(self, project_id, target_type='server'):
         """Generate startup kit for server, client, or admin"""
@@ -303,8 +254,8 @@ class NVFlareProvisioningService:
         if not project:
             raise ValueError(f"Project {project_id} not found")
         
-        # Call provisioning first
-        workspace = self.call_nvflare_provision(project_id)
+        # Call provisioning first (use existing if available)
+        workspace = self.call_nvflare_provision(project_id, force_reprovision=False)
         
         # Find the target directory
         if target_type == 'server':
@@ -358,8 +309,8 @@ class NVFlareProvisioningService:
         if not project:
             raise ValueError(f"Project {project_id} not found")
         
-        # Call provisioning first if not already done
-        workspace = self.call_nvflare_provision(project_id)
+        # Call provisioning first if not already done (use existing if available)
+        workspace = self.call_nvflare_provision(project_id, force_reprovision=False)
         
         # Find the specific item directory
         if target_type == 'server':
@@ -441,5 +392,74 @@ class NVFlareProvisioningService:
             'items': items,
             'last_updated': project.updated_at.isoformat()
         }
+    
+    def force_reprovision(self, project_id):
+        """Force reprovisioning of a project (useful when participants change)"""
+        try:
+            # Remove existing workspace
+            workspace = os.path.join(self.workspace_dir, f"project_{project_id}")
+            if os.path.exists(workspace):
+                shutil.rmtree(workspace)
+                print(f"Removed existing workspace: {workspace}")
+            
+            # Provision again
+            return self.call_nvflare_provision(project_id, force_reprovision=True)
+        except Exception as e:
+            print(f"Error during force reprovision: {e}")
+            raise
+
+    def generate_all_startup_kits(self, project_id):
+        """Generate startup kits for all participants in a project"""
+        project = Project.query.get(project_id)
+        if not project:
+            raise ValueError(f"Project {project_id} not found")
+        
+        # Ensure project is provisioned
+        workspace = self.call_nvflare_provision(project_id, force_reprovision=False)
+        
+        # Get all participants
+        servers = Server.query.filter_by(project_id=project_id).all()
+        clients = Client.query.filter_by(project_id=project_id).all()
+        admins = Admin.query.filter_by(project_id=project_id).all()
+        
+        startup_kits = {}
+        
+        # Generate server startup kits
+        for server in servers:
+            try:
+                server_kit, filename = self.generate_item_startup_kit(project_id, 'server', server.id)
+                startup_kits[f'server_{server.id}'] = {
+                    'name': server.name,
+                    'filename': filename,
+                    'data': server_kit
+                }
+            except Exception as e:
+                print(f"Error generating server kit for {server.name}: {e}")
+        
+        # Generate client startup kits
+        for client in clients:
+            try:
+                client_kit, filename = self.generate_item_startup_kit(project_id, 'client', client.id)
+                startup_kits[f'client_{client.id}'] = {
+                    'name': client.name,
+                    'filename': filename,
+                    'data': client_kit
+                }
+            except Exception as e:
+                print(f"Error generating client kit for {client.name}: {e}")
+        
+        # Generate admin startup kits
+        for admin in admins:
+            try:
+                admin_kit, filename = self.generate_item_startup_kit(project_id, 'admin', admin.id)
+                startup_kits[f'admin_{admin.id}'] = {
+                    'name': admin.email,
+                    'filename': filename,
+                    'data': admin_kit
+                }
+            except Exception as e:
+                print(f"Error generating admin kit for {admin.email}: {e}")
+        
+        return startup_kits
 
 

@@ -1046,15 +1046,76 @@ def approve_application(application_id):
 def provision_project(project_id):
     """Provision a project using NVFlare CLI"""
     try:
+        # Check if user has permission to provision this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can provision this project'})
+            response.status_code = 403
+            return response
+        
         workspace = provisioning_service.call_nvflare_provision(project_id)
-        return jsonify({
+        response = jsonify({
             'message': 'Project provisioned successfully',
             'workspace': workspace
         })
+        return add_cors_headers(response)
     except Exception as e:
         response = jsonify({'error': str(e)})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
+
+@api_bp.route('/reprovision/<int:project_id>', methods=['POST'])
+@jwt_required()
+def reprovision_project(project_id):
+    """Force reprovision a project (useful when participants change)"""
+    try:
+        # Check if user has permission to provision this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can reprovision this project'})
+            response.status_code = 403
+            return response
+        
+        workspace = provisioning_service.force_reprovision(project_id)
+        response = jsonify({
+            'message': 'Project reprovisioned successfully',
+            'workspace': workspace
+        })
+        return add_cors_headers(response)
+    except Exception as e:
+        response = jsonify({'error': str(e)})
+        response.status_code = 500
+        return add_cors_headers(response)
 
 @api_bp.route('/download/<target_type>/<int:project_id>')
 @api_bp.route('/download/<target_type>/<int:project_id>/<int:item_id>')
@@ -1107,6 +1168,88 @@ def download_startup_kit(target_type, project_id, item_id=None):
             as_attachment=True,
             download_name=filename
         )
+    except Exception as e:
+        response = jsonify({'error': str(e)})
+        response.status_code = 500
+        return add_cors_headers(response)
+
+@api_bp.route('/download-all/<int:project_id>')
+@jwt_required()
+def download_all_startup_kits(project_id):
+    """Download all startup kits for a project as a single zip file"""
+    try:
+        # Check if user has permission to access this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator, system admin, or project participant
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            # Check if user is a participant in this project
+            is_participant = False
+            servers = Server.query.filter_by(project_id=project_id).all()
+            clients = Client.query.filter_by(project_id=project_id).all()
+            admins = Admin.query.filter_by(project_id=project_id).all()
+            
+            for server in servers:
+                if server.org == current_user.organization:
+                    is_participant = True
+                    break
+            for client in clients:
+                if client.org == current_user.organization:
+                    is_participant = True
+                    break
+            for admin in admins:
+                if admin.email == current_user.email:
+                    is_participant = True
+                    break
+            
+            if not is_participant:
+                response = jsonify({'error': 'Unauthorized to access this project'})
+                response.status_code = 403
+                return response
+        
+        # Generate all startup kits
+        all_kits = provisioning_service.generate_all_startup_kits(project_id)
+        
+        # Create a master zip file containing all startup kits
+        master_zip = io.BytesIO()
+        with zipfile.ZipFile(master_zip, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for kit_id, kit_info in all_kits.items():
+                # Add each startup kit as a subfolder in the master zip
+                kit_data = kit_info['data']
+                kit_data.seek(0)
+                
+                # Create a subfolder for each kit
+                subfolder = f"{kit_info['name']}_{kit_id}"
+                
+                # Extract the individual kit and add its contents to the master zip
+                with zipfile.ZipFile(kit_data, 'r') as individual_kit:
+                    for item in individual_kit.namelist():
+                        data = individual_kit.read(item)
+                        arc_name = f"{subfolder}/{item}"
+                        zip_file.writestr(arc_name, data)
+        
+        master_zip.seek(0)
+        
+        return send_file(
+            master_zip,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"project_{project_id}_all_startup_kits.zip"
+        )
+        
     except Exception as e:
         response = jsonify({'error': str(e)})
         response.status_code = 500

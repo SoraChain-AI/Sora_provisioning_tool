@@ -30,11 +30,13 @@ venv.bak/
 FL/
 
 # Database
+./instance
+instance/*.db
+instance/provisioning_dashboard.db
+provisioning_dashboard.db
 *.db
 *.sqlite
 *.sqlite3
-instance/*.db
-./instance
 
 # Workspace and Provisioning Directories
 workspace/
