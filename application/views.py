@@ -10,6 +10,7 @@ from . import db
 from .models import User, Project, Server, Client, Admin, UserApplication
 from .provisioning import NVFlareProvisioningService
 import io
+import zipfile
 from datetime import datetime
 
 # Create blueprints

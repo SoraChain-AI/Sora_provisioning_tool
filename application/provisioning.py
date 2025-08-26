@@ -257,16 +257,27 @@ class NVFlareProvisioningService:
         # Call provisioning first (use existing if available)
         workspace = self.call_nvflare_provision(project_id, force_reprovision=False)
         
-        # Find the target directory
+        # Find the target directory based on actual NVFlare output structure
         if target_type == 'server':
-            # Look for server directory (usually named after the server)
+            # Look for server directory - usually ends with .com or .org
             for item in os.listdir(workspace):
-                if os.path.isdir(os.path.join(workspace, item)) and not item.startswith('site-') and not item.endswith('@'):
-                    # This should be the server directory
-                    target_dir = os.path.join(workspace, item)
+                item_path = os.path.join(workspace, item)
+                if (os.path.isdir(item_path) and 
+                    (item.endswith('.com') or item.endswith('.org'))):
+                    target_dir = item_path
                     break
             else:
-                raise RuntimeError("No server directory found")
+                # Fallback: look for any directory that might be the server
+                for item in os.listdir(workspace):
+                    item_path = os.path.join(workspace, item)
+                    if (os.path.isdir(item_path) and 
+                        not item.startswith('site-') and 
+                        not '@' in item):
+                        target_dir = item_path
+                        break
+                else:
+                    raise RuntimeError("No server directory found")
+                    
         elif target_type == 'client':
             # Find client directory (usually starts with 'site-')
             for item in os.listdir(workspace):
@@ -275,10 +286,11 @@ class NVFlareProvisioningService:
                     break
             else:
                 raise RuntimeError("No client directory found")
+                
         elif target_type == 'admin':
-            # Find admin directory (usually ends with '@')
+            # Find admin directory (usually contains @ symbol)
             for item in os.listdir(workspace):
-                if item.endswith('@'):
+                if '@' in item:
                     target_dir = os.path.join(workspace, item)
                     break
             else:
@@ -312,20 +324,30 @@ class NVFlareProvisioningService:
         # Call provisioning first if not already done (use existing if available)
         workspace = self.call_nvflare_provision(project_id, force_reprovision=False)
         
-        # Find the specific item directory
+        # Find the specific item directory based on actual NVFlare output structure
         if target_type == 'server':
             server = Server.query.get(item_id)
             if not server or server.project_id != project_id:
                 raise ValueError(f"Server {item_id} not found in project {project_id}")
             
-            # Look for server directory (usually named after the server)
+            # Look for server directory - usually ends with .com or .org
             for item in os.listdir(workspace):
-                if os.path.isdir(os.path.join(workspace, item)) and not item.startswith('site-') and not item.endswith('@'):
-                    # This should be the server directory
-                    target_dir = os.path.join(workspace, item)
+                item_path = os.path.join(workspace, item)
+                if (os.path.isdir(item_path) and 
+                    (item.endswith('.com') or item.endswith('.org'))):
+                    target_dir = item_path
                     break
             else:
-                raise RuntimeError("No server directory found")
+                # Fallback: look for any directory that might be the server
+                for item in os.listdir(workspace):
+                    item_path = os.path.join(workspace, item)
+                    if (os.path.isdir(item_path) and 
+                        not item.startswith('site-') and 
+                        not '@' in item):
+                        target_dir = item_path
+                        break
+                else:
+                    raise RuntimeError("No server directory found")
                 
         elif target_type == 'client':
             client = Client.query.get(item_id)
@@ -345,9 +367,9 @@ class NVFlareProvisioningService:
             if not admin or admin.project_id != project_id:
                 raise ValueError(f"Admin {item_id} not found in project {project_id}")
             
-            # Find admin directory (usually ends with '@')
+            # Find admin directory (usually contains @ symbol)
             for item in os.listdir(workspace):
-                if item.endswith('@'):
+                if '@' in item:
                     target_dir = os.path.join(workspace, item)
                     break
             else:
@@ -417,48 +439,67 @@ class NVFlareProvisioningService:
         # Ensure project is provisioned
         workspace = self.call_nvflare_provision(project_id, force_reprovision=False)
         
+        print(f"Generating all startup kits for project {project_id} from workspace: {workspace}")
+        print(f"Workspace contents: {os.listdir(workspace)}")
+        
         # Get all participants
         servers = Server.query.filter_by(project_id=project_id).all()
         clients = Client.query.filter_by(project_id=project_id).all()
         admins = Admin.query.filter_by(project_id=project_id).all()
+        
+        print(f"Found {len(servers)} servers, {len(clients)} clients, {len(admins)} admins")
         
         startup_kits = {}
         
         # Generate server startup kits
         for server in servers:
             try:
+                print(f"Generating server kit for {server.name} (ID: {server.id})")
                 server_kit, filename = self.generate_item_startup_kit(project_id, 'server', server.id)
                 startup_kits[f'server_{server.id}'] = {
                     'name': server.name,
                     'filename': filename,
                     'data': server_kit
                 }
+                print(f"Successfully generated server kit for {server.name}")
             except Exception as e:
                 print(f"Error generating server kit for {server.name}: {e}")
+                # Continue with other kits instead of failing completely
         
         # Generate client startup kits
         for client in clients:
             try:
+                print(f"Generating client kit for {client.name} (ID: {client.id})")
                 client_kit, filename = self.generate_item_startup_kit(project_id, 'client', client.id)
                 startup_kits[f'client_{client.id}'] = {
                     'name': client.name,
                     'filename': filename,
                     'data': client_kit
                 }
+                print(f"Successfully generated client kit for {client.name}")
             except Exception as e:
                 print(f"Error generating client kit for {client.name}: {e}")
+                # Continue with other kits instead of failing completely
         
         # Generate admin startup kits
         for admin in admins:
             try:
+                print(f"Generating admin kit for {admin.email} (ID: {admin.id})")
                 admin_kit, filename = self.generate_item_startup_kit(project_id, 'admin', admin.id)
                 startup_kits[f'admin_{admin.id}'] = {
                     'name': admin.email,
                     'filename': filename,
                     'data': admin_kit
                 }
+                print(f"Successfully generated admin kit for {admin.email}")
             except Exception as e:
                 print(f"Error generating admin kit for {admin.email}: {e}")
+                # Continue with other kits instead of failing completely
+        
+        print(f"Generated {len(startup_kits)} startup kits successfully")
+        
+        if not startup_kits:
+            raise RuntimeError("No startup kits could be generated")
         
         return startup_kits
 
