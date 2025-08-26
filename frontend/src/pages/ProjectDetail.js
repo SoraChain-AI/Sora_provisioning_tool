@@ -71,7 +71,23 @@ function ProjectDetail() {
     try {
       setLoading(true);
       const response = await ProjectService.getProject(id);
-      setProject(response.project);
+
+      // ProjectService.getProject() already returns response.data, so response is the data
+      // Backend returns { project: {...}, servers: [...], clients: [...], admins: [...] }
+      const projectData = response.project;
+      const servers = response.servers || [];
+      const clients = response.clients || [];
+      const admins = response.admins || [];
+
+      // Combine all data into the project object
+      const combinedProject = {
+        ...projectData,
+        servers: servers,
+        clients: clients,
+        admins: admins
+      };
+
+      setProject(combinedProject);
     } catch (err) {
       setError('Failed to load project');
       console.error(err);
@@ -85,29 +101,55 @@ function ProjectDetail() {
     setEditingItem(item);
 
     if (item) {
-      setFormData({
-        name: item.name,
-        org: item.org,
-        description: item.description || '',
-        fed_learn_port: item.fed_learn_port || 8002,
-        admin_port: item.admin_port || 8003,
-        connection_security: item.connection_security || 'mtls',
-        num_gpus: item.num_gpus || 1,
-        gpu_memory: item.gpu_memory || 16,
-        role: item.role || 'project_admin',
-      });
+      // Set form data based on item type
+      if (type === 'server') {
+        setFormData({
+          name: item.name,
+          org: item.org,
+          fed_learn_port: item.fed_learn_port || 8002,
+          admin_port: item.admin_port || 8003,
+          connection_security: item.connection_security || 'mtls',
+        });
+      } else if (type === 'client') {
+        setFormData({
+          name: item.name,
+          org: item.org,
+          description: item.description || '',
+          num_gpus: item.num_gpus || 1,
+          gpu_memory: item.gpu_memory || 16,
+        });
+      } else if (type === 'admin') {
+        setFormData({
+          email: item.email,
+          org: item.org,
+          role: item.role || 'project_admin',
+        });
+      }
     } else {
-      setFormData({
-        name: '',
-        org: '',
-        description: '',
-        fed_learn_port: 8002,
-        admin_port: 8003,
-        connection_security: 'mtls',
-        num_gpus: 1,
-        gpu_memory: 16,
-        role: 'project_admin',
-      });
+      // Set default form data based on type
+      if (type === 'server') {
+        setFormData({
+          name: '',
+          org: '',
+          fed_learn_port: 8002,
+          admin_port: 8003,
+          connection_security: 'mtls',
+        });
+      } else if (type === 'client') {
+        setFormData({
+          name: '',
+          org: '',
+          description: '',
+          num_gpus: 1,
+          gpu_memory: 16,
+        });
+      } else if (type === 'admin') {
+        setFormData({
+          email: '',
+          org: '',
+          role: 'project_admin',
+        });
+      }
     }
     setOpenDialog(true);
   };
@@ -230,7 +272,8 @@ function ProjectDetail() {
           label="Fed Learn Port"
           type="number"
           value={formData.fed_learn_port}
-          onChange={(e) => setFormData({ ...formData, fed_learn_port: parseInt(e.target.value) })}
+          onChange={(e) => setFormData({ ...formData, fed_learn_port: parseInt(e.target.value) || 8002 })}
+          inputProps={{ min: 1024, max: 65535 }}
           required
         />
       </Grid>
@@ -240,7 +283,8 @@ function ProjectDetail() {
           label="Admin Port"
           type="number"
           value={formData.admin_port}
-          onChange={(e) => setFormData({ ...formData, admin_port: parseInt(e.target.value) })}
+          onChange={(e) => setFormData({ ...formData, admin_port: parseInt(e.target.value) || 8003 })}
+          inputProps={{ min: 1024, max: 65535 }}
           required
         />
       </Grid>
@@ -297,7 +341,9 @@ function ProjectDetail() {
           label="Number of GPUs"
           type="number"
           value={formData.num_gpus}
-          onChange={(e) => setFormData({ ...formData, num_gpus: parseInt(e.target.value) })}
+          onChange={(e) => setFormData({ ...formData, num_gpus: parseInt(e.target.value) || 0 })}
+          inputProps={{ min: 0 }}
+          required
         />
       </Grid>
       <Grid item xs={12} sm={6}>
@@ -306,7 +352,9 @@ function ProjectDetail() {
           label="GPU Memory (GB)"
           type="number"
           value={formData.gpu_memory}
-          onChange={(e) => setFormData({ ...formData, gpu_memory: parseInt(e.target.value) })}
+          onChange={(e) => setFormData({ ...formData, gpu_memory: parseInt(e.target.value) || 0 })}
+          inputProps={{ min: 0 }}
+          required
         />
       </Grid>
     </Grid>
@@ -319,8 +367,8 @@ function ProjectDetail() {
           fullWidth
           label="Email"
           type="email"
-          value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+          value={formData.email}
+          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
           required
         />
       </Grid>
@@ -424,15 +472,17 @@ function ProjectDetail() {
                 Configuration
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                <strong>Overseer Agent:</strong> {project.overseer_agent_path}
+                <strong>Server Name:</strong> {project.server_name}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                <strong>Overseer Args:</strong> {project.overseer_agent_args}
+                <strong>Scheme:</strong> {project.scheme}
               </Typography>
             </Grid>
           </Grid>
         </CardContent>
       </Card>
+
+
 
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>

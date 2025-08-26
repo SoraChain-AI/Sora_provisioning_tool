@@ -233,6 +233,8 @@ def get_projects():
         project_list = []
         for project in projects:
             try:
+                # Get creator information
+                creator = User.query.get(project.created_by)
                 project_data = {
                     'id': project.id,
                     'name': project.name,
@@ -243,6 +245,8 @@ def get_projects():
                     'public': project.public,
                     'server_name': project.server_name,
                     'created_by': project.created_by,
+                    'creator_name': creator.name if creator else 'Unknown',
+                    'creator_email': creator.email if creator else 'Unknown',
                     'created_at': project.created_at.isoformat()
                 }
                 project_list.append(project_data)
@@ -294,68 +298,89 @@ def create_project():
         db.session.add(project)
         db.session.commit()
         
-        return jsonify({'message': 'Project created successfully', 'project_id': project.id})
+        response = jsonify({'message': 'Project created successfully', 'project_id': project.id})
+        return add_cors_headers(response)
         
     except Exception as e:
         print(f"Error creating project: {e}")
         db.session.rollback()
         response = jsonify({'error': 'Internal server error'})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
 
 @api_bp.route('/projects/<int:project_id>', methods=['GET'])
 @jwt_required()
 def get_project(project_id):
     """Get project details"""
-    project = Project.query.get_or_404(project_id)
-    servers = Server.query.filter_by(project_id=project_id).all()
-    clients = Client.query.filter_by(project_id=project_id).all()
-    admins = Admin.query.filter_by(project_id=project_id).all()
-    
-    # Get creator information
-    creator = User.query.get(project.created_by)
-    
-    return jsonify({
-        'project': {
-            'id': project.id,
-            'name': project.name,
-            'description': project.description,
-            'scheme': project.scheme,
-            'ha_mode': project.ha_mode,
-            'frozen': project.frozen,
-            'public': project.public,
-            'server_name': project.server_name,
-            'created_by': project.created_by,
-            'creator_name': creator.name if creator else 'Unknown',
-            'creator_email': creator.email if creator else 'Unknown',
-            'created_at': project.created_at.isoformat()
-        },
-        'servers': [{
-            'id': server.id,
-            'name': server.name,
-            'org': server.org,
-            'fed_learn_port': server.fed_learn_port,
-            'admin_port': server.admin_port,
-            'connection_security': server.connection_security,
-            'approval_state': server.approval_state
-        } for server in servers],
-        'clients': [{
-            'id': client.id,
-            'name': client.name,
-            'org': client.org,
-            'description': client.description,
-            'num_gpus': client.num_gpus,
-            'gpu_memory': client.gpu_memory,
-            'approval_state': client.approval_state
-        } for client in clients],
-        'admins': [{
-            'id': admin.id,
-            'email': admin.email,
-            'org': admin.org,
-            'role': admin.role,
-            'approval_state': admin.approval_state
-        } for admin in admins]
-    })
+    try:
+        print(f"Getting project {project_id}")
+        project = Project.query.get(project_id)
+        if not project:
+            print(f"Project {project_id} not found")
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return add_cors_headers(response)
+        
+        print(f"Found project: {project.name}")
+        servers = Server.query.filter_by(project_id=project_id).all()
+        clients = Client.query.filter_by(project_id=project_id).all()
+        admins = Admin.query.filter_by(project_id=project_id).all()
+        
+        print(f"Found {len(servers)} servers, {len(clients)} clients, {len(admins)} admins")
+        
+        # Get creator information
+        creator = User.query.get(project.created_by)
+        
+        response_data = {
+            'project': {
+                'id': project.id,
+                'name': project.name,
+                'description': project.description,
+                'scheme': project.scheme,
+                'ha_mode': project.ha_mode,
+                'frozen': project.frozen,
+                'public': project.public,
+                'server_name': project.server_name,
+                'created_by': project.created_by,
+                'creator_name': creator.name if creator else 'Unknown',
+                'creator_email': creator.email if creator else 'Unknown',
+                'created_at': project.created_at.isoformat()
+            },
+            'servers': [{
+                'id': server.id,
+                'name': server.name,
+                'org': server.org,
+                'fed_learn_port': server.fed_learn_port,
+                'admin_port': server.admin_port,
+                'connection_security': server.connection_security,
+                'approval_state': server.approval_state
+            } for server in servers],
+            'clients': [{
+                'id': client.id,
+                'name': client.name,
+                'org': client.org,
+                'description': client.description,
+                'num_gpus': client.num_gpus,
+                'gpu_memory': client.gpu_memory,
+                'approval_state': client.approval_state
+            } for client in clients],
+            'admins': [{
+                'id': admin.id,
+                'email': admin.email,
+                'org': admin.org,
+                'role': admin.role,
+                'approval_state': admin.approval_state
+            } for admin in admins]
+        }
+        
+        response = jsonify(response_data)
+        return add_cors_headers(response)
+        
+    except Exception as e:
+        print(f"Error getting project {project_id}: {e}")
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return add_cors_headers(response)
 
 @api_bp.route('/projects/<int:project_id>', methods=['PUT'])
 @jwt_required()
@@ -590,7 +615,7 @@ def add_client(project_id):
         # Validate required fields
         required_fields = ['name', 'org']
         for field in required_fields:
-            if not data.get(field):
+            if data.get(field) is None or data.get(field) == '':
                 response = jsonify({'error': f'Missing required field: {field}'})
                 response.status_code = 400
                 return response
@@ -600,6 +625,21 @@ def add_client(project_id):
         if not project:
             response = jsonify({'error': 'Project not found'})
             response.status_code = 404
+            return response
+        
+        # Check if user has permission to modify this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
             return response
         
         client = Client(
@@ -616,14 +656,15 @@ def add_client(project_id):
         db.session.commit()
         
         print(f"Client added successfully: {client.name}")
-        return jsonify({'message': 'Client added successfully', 'client_id': client.id})
+        response = jsonify({'message': 'Client added successfully', 'client_id': client.id})
+        return add_cors_headers(response)
         
     except Exception as e:
         print(f"Error adding client: {e}")
         db.session.rollback()
         response = jsonify({'error': 'Internal server error'})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
 
 @api_bp.route('/projects/<int:project_id>/clients/<int:client_id>', methods=['PUT'])
 @jwt_required()
@@ -688,6 +729,21 @@ def add_admin(project_id):
             response.status_code = 404
             return response
         
+        # Check if user has permission to modify this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
+            return response
+        
         admin = Admin(
             project_id=project_id,
             email=data['email'],
@@ -700,14 +756,15 @@ def add_admin(project_id):
         db.session.commit()
         
         print(f"Admin added successfully: {admin.email}")
-        return jsonify({'message': 'Admin added successfully', 'admin_id': admin.id})
+        response = jsonify({'message': 'Admin added successfully', 'admin_id': admin.id})
+        return add_cors_headers(response)
         
     except Exception as e:
         print(f"Error adding admin: {e}")
         db.session.rollback()
         response = jsonify({'error': 'Internal server error'})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
 
 @api_bp.route('/projects/<int:project_id>/admins/<int:admin_id>', methods=['PUT'])
 @jwt_required()
@@ -797,7 +854,19 @@ def get_project_applications(project_id):
         current_user_email = get_jwt_identity()
         user = User.query.filter_by(email=current_user_email).first()
         
-        if not user or user.role not in ['admin', 'proj_admin']:
+        if not user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Check if user is admin, project admin, or project creator
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        if user.role not in ['admin', 'project_admin'] and project.created_by != user.id:
             response = jsonify({'error': 'Unauthorized'})
             response.status_code = 403
             return response
@@ -818,13 +887,14 @@ def get_project_applications(project_id):
                 'created_at': app.created_at.isoformat()
             })
         
-        return jsonify({'applications': result})
+        response = jsonify({'applications': result})
+        return add_cors_headers(response)
         
     except Exception as e:
         print(f"Error getting applications: {e}")
         response = jsonify({'error': 'Internal server error'})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
 
 @api_bp.route('/applications/<int:application_id>/approve', methods=['POST'])
 @jwt_required()
@@ -834,7 +904,25 @@ def approve_application(application_id):
         current_user_email = get_jwt_identity()
         admin_user = User.query.filter_by(email=current_user_email).first()
         
-        if not admin_user or admin_user.role not in ['admin', 'proj_admin']:
+        if not admin_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Check if user is admin, project admin, or project creator
+        application = UserApplication.query.get(application_id)
+        if not application:
+            response = jsonify({'error': 'Application not found'})
+            response.status_code = 404
+            return response
+        
+        project = Project.query.get(application.project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        if admin_user.role not in ['admin', 'project_admin'] and project.created_by != admin_user.id:
             response = jsonify({'error': 'Unauthorized'})
             response.status_code = 403
             return response
