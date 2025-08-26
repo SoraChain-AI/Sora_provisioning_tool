@@ -212,15 +212,23 @@ function ProjectDetail() {
     try {
       await ProjectService.provisionProject(id);
       alert('Project provisioned successfully!');
+      // Refresh project data to show updated provisioning status
+      loadProject();
     } catch (err) {
       setError('Failed to provision project');
       console.error(err);
     }
   };
 
-  const handleDownload = async (type) => {
+  const handleDownload = async (type, itemId = null) => {
     try {
-      await ProjectService.downloadStartupKit(id, type);
+      if (itemId) {
+        // Download specific item startup kit
+        await ProjectService.downloadStartupKit(id, type, itemId);
+      } else {
+        // Download general startup kit
+        await ProjectService.downloadStartupKit(id, type);
+      }
     } catch (err) {
       setError('Failed to download startup kit');
       console.error(err);
@@ -477,6 +485,16 @@ function ProjectDetail() {
               <Typography variant="body2" color="text.secondary">
                 <strong>Scheme:</strong> {project.scheme}
               </Typography>
+              <Box display="flex" alignItems="center" gap={1} mt={1}>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Status:</strong>
+                </Typography>
+                <Chip
+                  label={project.provisioned ? "Provisioned" : "Not Provisioned"}
+                  color={project.provisioned ? "success" : "default"}
+                  size="small"
+                />
+              </Box>
             </Grid>
           </Grid>
         </CardContent>
@@ -556,6 +574,16 @@ function ProjectDetail() {
                           </IconButton>
                         </Tooltip>
                       )}
+                      <Tooltip title="Download Server Startup Kit">
+                        <IconButton
+                          size="small"
+                          color="success"
+                          onClick={() => handleDownload('server', server.id)}
+                          disabled={!project.provisioned}
+                        >
+                          <DownloadIcon />
+                        </IconButton>
+                      </Tooltip>
                     </Box>
                   </CardContent>
                 </Card>
@@ -610,6 +638,16 @@ function ProjectDetail() {
                           </IconButton>
                         </Tooltip>
                       )}
+                      <Tooltip title="Download Client Startup Kit">
+                        <IconButton
+                          size="small"
+                          color="success"
+                          onClick={() => handleDownload('client', client.id)}
+                          disabled={!project.provisioned}
+                        >
+                          <DownloadIcon />
+                        </IconButton>
+                      </Tooltip>
                     </Box>
                   </CardContent>
                 </Card>
@@ -708,6 +746,7 @@ function ProjectDetail() {
 }
 
 export default ProjectDetail;
+
 
 
 

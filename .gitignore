@@ -33,9 +33,8 @@ FL/
 *.db
 *.sqlite
 *.sqlite3
-instance/provisioning_dashboard.db
-instance/
-./instance/
+instance/*.db
+./instance
 
 # Workspace and Provisioning Directories
 workspace/
@@ -43,6 +42,7 @@ workspace/
 /tmp/nvflare-*/
 provision_config/
 startup_kits/
+config/
 
 # Test Scripts and Files
 test_*.py

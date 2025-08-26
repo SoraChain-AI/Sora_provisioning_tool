@@ -109,22 +109,38 @@ export const ProjectService = {
     },
 
     // Downloads
-    async downloadStartupKit(projectId, type) {
-        const response = await api.get(`/download/${type}/${projectId}`, {
+    async downloadStartupKit(projectId, type, itemId = null) {
+        let url = `/download/${type}/${projectId}`;
+        if (itemId) {
+            url += `/${itemId}`;
+        }
+
+        const response = await api.get(url, {
             responseType: 'blob',
         });
 
         // Create download link
-        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const downloadUrl = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
-        link.href = url;
+        link.href = downloadUrl;
         link.setAttribute('download', `${type}_startup_kit.zip`);
         document.body.appendChild(link);
         link.click();
         link.remove();
-        window.URL.revokeObjectURL(url);
+        window.URL.revokeObjectURL(downloadUrl);
 
         return response.data;
+    },
+
+    // Check if project is provisioned
+    async checkProvisioningStatus(projectId) {
+        try {
+            const response = await api.get(`/status/${projectId}`);
+            return response.data;
+        } catch (error) {
+            console.error('Error checking provisioning status:', error);
+            return { status: 'not_provisioned' };
+        }
     },
 };
 

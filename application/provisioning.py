@@ -352,6 +352,75 @@ class NVFlareProvisioningService:
         zip_buffer.seek(0)
         return zip_buffer, f"{target_type}_startup_kit.zip"
     
+    def generate_item_startup_kit(self, project_id, target_type, item_id):
+        """Generate startup kit for a specific server, client, or admin"""
+        project = Project.query.get(project_id)
+        if not project:
+            raise ValueError(f"Project {project_id} not found")
+        
+        # Call provisioning first if not already done
+        workspace = self.call_nvflare_provision(project_id)
+        
+        # Find the specific item directory
+        if target_type == 'server':
+            server = Server.query.get(item_id)
+            if not server or server.project_id != project_id:
+                raise ValueError(f"Server {item_id} not found in project {project_id}")
+            
+            # Look for server directory (usually named after the server)
+            for item in os.listdir(workspace):
+                if os.path.isdir(os.path.join(workspace, item)) and not item.startswith('site-') and not item.endswith('@'):
+                    # This should be the server directory
+                    target_dir = os.path.join(workspace, item)
+                    break
+            else:
+                raise RuntimeError("No server directory found")
+                
+        elif target_type == 'client':
+            client = Client.query.get(item_id)
+            if not client or client.project_id != project_id:
+                raise ValueError(f"Client {item_id} not found in project {project_id}")
+            
+            # Find client directory (usually starts with 'site-')
+            for item in os.listdir(workspace):
+                if item.startswith('site-'):
+                    target_dir = os.path.join(workspace, item)
+                    break
+            else:
+                raise RuntimeError("No client directory found")
+                
+        elif target_type == 'admin':
+            admin = Admin.query.get(item_id)
+            if not admin or admin.project_id != project_id:
+                raise ValueError(f"Admin {item_id} not found in project {project_id}")
+            
+            # Find admin directory (usually ends with '@')
+            for item in os.listdir(workspace):
+                if item.endswith('@'):
+                    target_dir = os.path.join(workspace, item)
+                    break
+            else:
+                raise RuntimeError("No admin directory found")
+        else:
+            raise ValueError(f"Invalid target type: {target_type}")
+        
+        if not os.path.exists(target_dir):
+            raise RuntimeError(f"Target directory {target_dir} not found")
+        
+        print(f"Creating startup kit for {target_type} {item_id} from {target_dir}")
+        
+        # Create zip file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for root, dirs, files in os.walk(target_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arc_name = os.path.relpath(file_path, target_dir)
+                    zip_file.write(file_path, arc_name)
+        
+        zip_buffer.seek(0)
+        return zip_buffer, f"{target_type}_{item_id}_startup_kit.zip"
+    
     def get_project_status(self, project_id):
         """Get the status of a project provisioning"""
         project = Project.query.get(project_id)

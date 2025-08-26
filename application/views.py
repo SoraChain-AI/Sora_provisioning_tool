@@ -331,6 +331,14 @@ def get_project(project_id):
         # Get creator information
         creator = User.query.get(project.created_by)
         
+        # Check provisioning status
+        try:
+            provisioning_status = provisioning_service.get_project_status(project_id)
+            is_provisioned = provisioning_status and provisioning_status.get('status') == 'provisioned'
+        except Exception as e:
+            print(f"Error checking provisioning status: {e}")
+            is_provisioned = False
+        
         response_data = {
             'project': {
                 'id': project.id,
@@ -344,7 +352,8 @@ def get_project(project_id):
                 'created_by': project.created_by,
                 'creator_name': creator.name if creator else 'Unknown',
                 'creator_email': creator.email if creator else 'Unknown',
-                'created_at': project.created_at.isoformat()
+                'created_at': project.created_at.isoformat(),
+                'provisioned': is_provisioned
             },
             'servers': [{
                 'id': server.id,
@@ -586,19 +595,22 @@ def delete_server(project_id, server_id):
         
         if not server:
             response = jsonify({'error': 'Server not found'})
-            response.status_code = 403
+            response.status_code = 404
             return response
-    
-            db.session.delete(server)
+        
+        db.session.delete(server)
         db.session.commit()
-        return jsonify({'message': 'Server deleted successfully'})
+        
+        print(f"Server {server_id} deleted successfully from project {project_id}")
+        response = jsonify({'message': 'Server deleted successfully'})
+        return add_cors_headers(response)
         
     except Exception as e:
         print(f"Error deleting server: {e}")
         db.session.rollback()
         response = jsonify({'error': 'Internal server error'})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
 
 @api_bp.route('/projects/<int:project_id>/clients', methods=['POST'])
 @jwt_required()
@@ -691,16 +703,49 @@ def update_client(project_id, client_id):
 @jwt_required()
 def delete_client(project_id, client_id):
     """Delete client from project"""
-    client = Client.query.filter_by(id=client_id, project_id=project_id).first()
-    
-    if not client:
-        response = jsonify({'error': 'Client not found'})
-        response.status_code = 404
-        return response
-    
-    db.session.delete(client)
-    db.session.commit()
-    return jsonify({'message': 'Client deleted successfully'})
+    try:
+        # Check if user has permission to modify this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
+            return response
+        
+        client = Client.query.filter_by(id=client_id, project_id=project_id).first()
+        
+        if not client:
+            response = jsonify({'error': 'Client not found'})
+            response.status_code = 404
+            return response
+        
+        db.session.delete(client)
+        db.session.commit()
+        
+        print(f"Client {client_id} deleted successfully from project {project_id}")
+        response = jsonify({'message': 'Client deleted successfully'})
+        return add_cors_headers(response)
+        
+    except Exception as e:
+        print(f"Error deleting client: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return add_cors_headers(response)
 
 @api_bp.route('/projects/<int:project_id>/admins', methods=['POST'])
 @jwt_required()
@@ -789,16 +834,49 @@ def update_admin(project_id, admin_id):
 @jwt_required()
 def delete_admin(project_id, admin_id):
     """Delete admin from project"""
-    admin = Admin.query.filter_by(id=admin_id, project_id=project_id).first()
-    
-    if not admin:
-        response = jsonify({'error': 'Admin not found'})
-        response.status_code = 404
-        return response
-    
-    db.session.delete(admin)
-    db.session.commit()
-    return jsonify({'message': 'Admin deleted successfully'})
+    try:
+        # Check if user has permission to modify this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
+            return response
+        
+        admin = Admin.query.filter_by(id=admin_id, project_id=project_id).first()
+        
+        if not admin:
+            response = jsonify({'error': 'Admin not found'})
+            response.status_code = 404
+            return response
+        
+        db.session.delete(admin)
+        db.session.commit()
+        
+        print(f"Admin {admin_id} deleted successfully from project {project_id}")
+        response = jsonify({'message': 'Admin deleted successfully'})
+        return add_cors_headers(response)
+        
+    except Exception as e:
+        print(f"Error deleting admin: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return add_cors_headers(response)
 
 # User Application endpoints
 @api_bp.route('/projects/<int:project_id>/apply', methods=['POST'])
@@ -979,11 +1057,49 @@ def provision_project(project_id):
         return response
 
 @api_bp.route('/download/<target_type>/<int:project_id>')
+@api_bp.route('/download/<target_type>/<int:project_id>/<int:item_id>')
 @jwt_required()
-def download_startup_kit(target_type, project_id):
+def download_startup_kit(target_type, project_id, item_id=None):
     """Download startup kit for server, client, or admin"""
     try:
-        zip_buffer, filename = provisioning_service.generate_startup_kit(project_id, target_type)
+        # Check if user has permission to access this project
+        current_user_email = get_jwt_identity()
+        current_user = User.query.filter_by(email=current_user_email).first()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator, system admin, or project participant
+        if current_user.role != 'admin' and project.created_by != current_user.id:
+            # Check if user is a participant in this project
+            is_participant = False
+            if target_type == 'server':
+                is_participant = Server.query.filter_by(project_id=project_id, org=current_user.organization).first() is not None
+            elif target_type == 'client':
+                is_participant = Client.query.filter_by(project_id=project_id, org=current_user.organization).first() is not None
+            elif target_type == 'admin':
+                is_participant = Admin.query.filter_by(project_id=project_id, email=current_user.email).first() is not None
+            
+            if not is_participant:
+                response = jsonify({'error': 'Unauthorized to access this project'})
+                response.status_code = 403
+                return response
+        
+        if item_id:
+            # Download specific item startup kit
+            zip_buffer, filename = provisioning_service.generate_item_startup_kit(project_id, target_type, item_id)
+        else:
+            # Download general startup kit
+            zip_buffer, filename = provisioning_service.generate_startup_kit(project_id, target_type)
         
         return send_file(
             io.BytesIO(zip_buffer.getvalue()),
@@ -994,7 +1110,7 @@ def download_startup_kit(target_type, project_id):
     except Exception as e:
         response = jsonify({'error': str(e)})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
 
 @api_bp.route('/status/<int:project_id>')
 @jwt_required()
