@@ -46,19 +46,17 @@ function Projects() {
     });
 
     useEffect(() => {
+        // Get current user from localStorage
+        const userData = localStorage.getItem('user');
+        if (userData) {
+            try {
+                setCurrentUser(JSON.parse(userData));
+            } catch (error) {
+                console.error('Error parsing user data:', error);
+            }
+        }
         loadProjects();
-        // Get current user from localStorage or context
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-        setCurrentUser(user);
     }, []);
-
-    const canEditProject = (project) => {
-        if (!currentUser) return false;
-        // Admin can edit any project
-        if (currentUser.role === 'admin') return true;
-        // Project creator can edit their own project
-        return project.created_by === currentUser.id;
-    };
 
     const loadProjects = async () => {
         try {
@@ -71,6 +69,16 @@ function Projects() {
         } finally {
             setLoading(false);
         }
+    };
+
+    const canEditProject = (project) => {
+        if (!currentUser) return false;
+        return currentUser.role === 'admin' || project.created_by === currentUser.id;
+    };
+
+    const handleViewDetails = (projectId) => {
+        // Navigate to project detail page
+        window.location.href = `/projects/${projectId}`;
     };
 
     const handleOpenDialog = (project = null) => {
@@ -115,8 +123,14 @@ function Projects() {
             handleCloseDialog();
             loadProjects();
         } catch (err) {
-            setError('Failed to save project');
-            console.error(err);
+            if (err.response?.status === 401) {
+                setError('Authentication failed. Please log in again.');
+                // Don't redirect to login automatically - let user decide
+                console.error('Authentication error during project update:', err);
+            } else {
+                setError('Failed to save project');
+                console.error(err);
+            }
         }
     };
 
@@ -130,11 +144,6 @@ function Projects() {
                 console.error(err);
             }
         }
-    };
-
-    const handleViewDetails = (projectId) => {
-        // Navigate to project detail page
-        window.location.href = `/projects/${projectId}`;
     };
 
     const handleProvision = async (projectId) => {
@@ -228,7 +237,7 @@ function Projects() {
                                         {project.description || 'No description available'}
                                     </Typography>
 
-                                    <Typography variant="caption" color="text.secondary" display="block" mb={2}>
+                                    <Typography variant="body2" color="text.secondary" mb={2} sx={{ fontSize: '0.875rem' }}>
                                         Created by: {project.creator_name || 'Unknown'} ({project.creator_email || 'Unknown'})
                                     </Typography>
 
@@ -251,6 +260,7 @@ function Projects() {
                                     </Box>
 
                                     <Box display="flex" gap={1} flexWrap="wrap">
+                                        {/* View Details Button - Always visible */}
                                         <Tooltip title="View Project Details">
                                             <IconButton
                                                 size="small"
@@ -261,6 +271,7 @@ function Projects() {
                                             </IconButton>
                                         </Tooltip>
 
+                                        {/* Edit Button - Only for project owners or admins */}
                                         {canEditProject(project) && (
                                             <Tooltip title="Edit Project">
                                                 <IconButton
@@ -272,29 +283,33 @@ function Projects() {
                                             </Tooltip>
                                         )}
 
-                                        <Tooltip title={canEditProject(project) ? "Provision Project" : "Only project creators can provision projects"}>
-                                            <span>
+                                        {/* Provision Button - Only for project owners or admins */}
+                                        {canEditProject(project) && (
+                                            <Tooltip title="Provision Project">
                                                 <IconButton
                                                     size="small"
                                                     color="success"
                                                     onClick={() => handleProvision(project.id)}
-                                                    disabled={!canEditProject(project)}
                                                 >
                                                     <ProvisionIcon />
                                                 </IconButton>
-                                            </span>
-                                        </Tooltip>
+                                            </Tooltip>
+                                        )}
 
-                                        <Tooltip title="Download Server Kit">
-                                            <IconButton
-                                                size="small"
-                                                color="primary"
-                                                onClick={() => handleDownload(project.id, 'server')}
-                                            >
-                                                <DownloadIcon />
-                                            </IconButton>
-                                        </Tooltip>
+                                        {/* Download Button - Only for project owners or admins */}
+                                        {canEditProject(project) && (
+                                            <Tooltip title="Download Server Kit">
+                                                <IconButton
+                                                    size="small"
+                                                    color="primary"
+                                                    onClick={() => handleDownload(project.id, 'server')}
+                                                >
+                                                    <DownloadIcon />
+                                                </IconButton>
+                                            </Tooltip>
+                                        )}
 
+                                        {/* Delete Button - Only for project owners or admins */}
                                         {canEditProject(project) && (
                                             <Tooltip title="Delete Project">
                                                 <IconButton
@@ -361,8 +376,7 @@ function Projects() {
                                     label="Server Name"
                                     value={formData.server_name}
                                     onChange={(e) => setFormData({ ...formData, server_name: e.target.value })}
-                                    required
-                                    helperText="This name will be used in server configuration files"
+                                    placeholder="e.g., FLServer.com"
                                 />
                             </Grid>
                         </Grid>

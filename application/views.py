@@ -37,6 +37,29 @@ def add_cors_headers(response):
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
         return response
 
+def get_current_user():
+    """Helper function to get current user from JWT token"""
+    current_user_email = get_jwt_identity()
+    print(f"🔍 get_current_user() - JWT identity: {current_user_email}")
+    
+    if not current_user_email:
+        print("❌ No JWT identity found")
+        return None
+    
+    user = User.query.filter_by(email=current_user_email).first()
+    print(f"🔍 User found by email '{current_user_email}': {user}")
+    return user
+
+def can_edit_project(project, current_user):
+    """Check if current user can edit the project"""
+    can_edit = current_user.role == 'admin' or project.created_by == current_user.id
+    print(f"🔐 can_edit_project check:")
+    print(f"  - Current user ID: {current_user.id if current_user else 'None'}")
+    print(f"  - Current user role: {current_user.role if current_user else 'None'}")
+    print(f"  - Project created_by: {project.created_by if project else 'None'}")
+    print(f"  - Can edit: {can_edit}")
+    return can_edit
+
 @api_bp.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -273,9 +296,7 @@ def create_project():
     try:
         print(f"Creating project - request headers: {dict(request.headers)}")
         # Get current user
-        current_user_email = get_jwt_identity()
-        print(f"Current user email from JWT: {current_user_email}")
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         print(f"Current user found: {current_user}")
         
         if not current_user:
@@ -397,11 +418,15 @@ def get_project(project_id):
 def update_project(project_id):
     """Update project details - only project creator can update"""
     try:
+        print(f"🔐 Update project {project_id} - JWT identity: {get_jwt_identity()}")
+        print(f"🔐 Request headers: {dict(request.headers)}")
+        
         # Get current user
-        current_user_id = get_jwt_identity()
-        current_user = User.query.get(current_user_id)
+        current_user = get_current_user()
+        print(f"🔐 Current user found: {current_user}")
         
         if not current_user:
+            print(f"❌ User not found for JWT identity: {get_jwt_identity()}")
             response = jsonify({'error': 'User not found'})
             response.status_code = 401
             return response
@@ -414,10 +439,13 @@ def update_project(project_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        print(f"🔐 Checking edit permissions for project {project_id}")
+        if not can_edit_project(project, current_user):
+            print(f"❌ Permission denied - user {current_user.id} cannot edit project {project_id}")
             response = jsonify({'error': 'Only the project creator can update this project'})
             response.status_code = 403
             return response
+        print(f"✅ Permission granted - user {current_user.id} can edit project {project_id}")
         
         data = request.get_json()
         
@@ -444,52 +472,6 @@ def update_project(project_id):
         
     except Exception as e:
         print(f"Error updating project: {e}")
-        db.session.rollback()
-        response = jsonify({'error': 'Internal server error'})
-        response.status_code = 500
-        return response
-
-@api_bp.route('/projects/<int:project_id>', methods=['DELETE'])
-@jwt_required()
-def delete_project(project_id):
-    """Delete project - only project creator or system admin can delete"""
-    try:
-        # Get current user
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
-        
-        if not current_user:
-            response = jsonify({'error': 'User not found'})
-            response.status_code = 401
-            return response
-        
-        # Get project
-        project = Project.query.get(project_id)
-        if not project:
-            response = jsonify({'error': 'Project not found'})
-            response.status_code = 404
-            return response
-        
-        # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
-            response = jsonify({'error': 'Only the project creator or system admin can delete this project'})
-            response.status_code = 403
-            return response
-        
-        # Delete all related data first
-        Server.query.filter_by(project_id=project_id).delete()
-        Client.query.filter_by(project_id=project_id).delete()
-        Admin.query.filter_by(project_id=project_id).delete()
-        UserApplication.query.filter_by(project_id=project_id).delete()
-        
-        # Delete the project
-        db.session.delete(project)
-        db.session.commit()
-        
-        return jsonify({'message': 'Project deleted successfully'})
-        
-    except Exception as e:
-        print(f"Error deleting project: {e}")
         db.session.rollback()
         response = jsonify({'error': 'Internal server error'})
         response.status_code = 500
@@ -523,8 +505,7 @@ def add_server(project_id):
             return response
         
         # Check if user has permission to modify this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -532,7 +513,7 @@ def add_server(project_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
             return response
@@ -566,8 +547,7 @@ def update_server(project_id, server_id):
     """Update server in project"""
     try:
         # Check if user has permission to modify this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -582,7 +562,7 @@ def update_server(project_id, server_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
             return response
@@ -617,8 +597,7 @@ def delete_server(project_id, server_id):
     """Delete server from project"""
     try:
         # Check if user has permission to modify this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -633,7 +612,7 @@ def delete_server(project_id, server_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
             return response
@@ -687,8 +666,7 @@ def add_client(project_id):
             return response
         
         # Check if user has permission to modify this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -696,7 +674,7 @@ def add_client(project_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
             return response
@@ -729,31 +707,9 @@ def add_client(project_id):
 @jwt_required()
 def update_client(project_id, client_id):
     """Update client in project"""
-    data = request.get_json()
-    client = Client.query.filter_by(id=client_id, project_id=project_id).first()
-    
-    if not client:
-        response = jsonify({'error': 'Client not found'})
-        response.status_code = 404
-        return response
-    
-    client.name = data['name']
-    client.org = data['org']
-    client.description = data.get('description', '')
-    client.num_gpus = data.get('num_gpus', 1)
-    client.gpu_memory = data.get('gpu_memory', 16)
-    
-    db.session.commit()
-    return jsonify({'message': 'Client updated successfully'})
-
-@api_bp.route('/projects/<int:project_id>/clients/<int:client_id>', methods=['DELETE'])
-@jwt_required()
-def delete_client(project_id, client_id):
-    """Delete client from project"""
     try:
         # Check if user has permission to modify this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -768,7 +724,57 @@ def delete_client(project_id, client_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
+            return response
+        
+        data = request.get_json()
+        client = Client.query.filter_by(id=client_id, project_id=project_id).first()
+        
+        if not client:
+            response = jsonify({'error': 'Client not found'})
+            response.status_code = 404
+            return response
+        
+        client.name = data['name']
+        client.org = data['org']
+        client.description = data.get('description', '')
+        client.num_gpus = data.get('num_gpus', 1)
+        client.gpu_memory = data.get('gpu_memory', 16)
+        
+        db.session.commit()
+        return jsonify({'message': 'Client updated successfully'})
+        
+    except Exception as e:
+        print(f"Error updating client: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return response
+
+@api_bp.route('/projects/<int:project_id>/clients/<int:client_id>', methods=['DELETE'])
+@jwt_required()
+def delete_client(project_id, client_id):
+    """Delete client from project"""
+    try:
+        # Check if user has permission to modify this project
+        current_user = get_current_user()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
             return response
@@ -822,8 +828,7 @@ def add_admin(project_id):
             return response
         
         # Check if user has permission to modify this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -831,7 +836,7 @@ def add_admin(project_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
             return response
@@ -862,29 +867,9 @@ def add_admin(project_id):
 @jwt_required()
 def update_admin(project_id, admin_id):
     """Update admin in project"""
-    data = request.get_json()
-    admin = Admin.query.filter_by(id=admin_id, project_id=project_id).first()
-    
-    if not admin:
-        response = jsonify({'error': 'Admin not found'})
-        response.status_code = 404
-        return response
-    
-    admin.email = data['email']
-    admin.org = data['org']
-    admin.role = data.get('role', 'project_admin')
-    
-    db.session.commit()
-    return jsonify({'message': 'Admin updated successfully'})
-
-@api_bp.route('/projects/<int:project_id>/admins/<int:admin_id>', methods=['DELETE'])
-@jwt_required()
-def delete_admin(project_id, admin_id):
-    """Delete admin from project"""
     try:
         # Check if user has permission to modify this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -899,7 +884,55 @@ def delete_admin(project_id, admin_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
+            response = jsonify({'error': 'Only the project creator can modify this project'})
+            response.status_code = 403
+            return response
+        
+        data = request.get_json()
+        admin = Admin.query.filter_by(id=admin_id, project_id=project_id).first()
+        
+        if not admin:
+            response = jsonify({'error': 'Admin not found'})
+            response.status_code = 404
+            return response
+        
+        admin.email = data['email']
+        admin.org = data['org']
+        admin.role = data.get('role', 'project_admin')
+        
+        db.session.commit()
+        return jsonify({'message': 'Admin updated successfully'})
+        
+    except Exception as e:
+        print(f"Error updating admin: {e}")
+        db.session.rollback()
+        response = jsonify({'error': 'Internal server error'})
+        response.status_code = 500
+        return response
+
+@api_bp.route('/projects/<int:project_id>/admins/<int:admin_id>', methods=['DELETE'])
+@jwt_required()
+def delete_admin(project_id, admin_id):
+    """Delete admin from project"""
+    try:
+        # Check if user has permission to modify this project
+        current_user = get_current_user()
+        
+        if not current_user:
+            response = jsonify({'error': 'User not found'})
+            response.status_code = 401
+            return response
+        
+        # Get project to check ownership
+        project = Project.query.get(project_id)
+        if not project:
+            response = jsonify({'error': 'Project not found'})
+            response.status_code = 404
+            return response
+        
+        # Check if user is the project creator or a system admin
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
             return response
@@ -931,8 +964,7 @@ def delete_admin(project_id, admin_id):
 def apply_to_project(project_id):
     """User applies to join a project"""
     try:
-        current_user_email = get_jwt_identity()
-        user = User.query.filter_by(email=current_user_email).first()
+        user = get_current_user()
         
         if not user:
             response = jsonify({'error': 'User not found'})
@@ -976,8 +1008,7 @@ def apply_to_project(project_id):
 def get_project_applications(project_id):
     """Get applications for a project (admin only)"""
     try:
-        current_user_email = get_jwt_identity()
-        user = User.query.filter_by(email=current_user_email).first()
+        user = get_current_user()
         
         if not user:
             response = jsonify({'error': 'User not found'})
@@ -1026,8 +1057,7 @@ def get_project_applications(project_id):
 def approve_application(application_id):
     """Approve or reject a user application"""
     try:
-        current_user_email = get_jwt_identity()
-        admin_user = User.query.filter_by(email=current_user_email).first()
+        admin_user = get_current_user()
         
         if not admin_user:
             response = jsonify({'error': 'User not found'})
@@ -1094,8 +1124,7 @@ def provision_project(project_id):
     """Provision a project using NVFlare CLI"""
     try:
         # Check if user has permission to provision this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -1110,7 +1139,7 @@ def provision_project(project_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can provision this project'})
             response.status_code = 403
             return response
@@ -1132,8 +1161,7 @@ def reprovision_project(project_id):
     """Force reprovision a project (useful when participants change)"""
     try:
         # Check if user has permission to provision this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -1148,7 +1176,7 @@ def reprovision_project(project_id):
             return response
         
         # Check if user is the project creator or a system admin
-        if current_user.role != 'admin' and project.created_by != current_user.id:
+        if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can reprovision this project'})
             response.status_code = 403
             return response
@@ -1171,8 +1199,7 @@ def download_startup_kit(target_type, project_id, item_id=None):
     """Download startup kit for server, client, or admin"""
     try:
         # Check if user has permission to access this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})
@@ -1226,8 +1253,7 @@ def download_all_startup_kits(project_id):
     """Download all startup kits for a project as a single zip file"""
     try:
         # Check if user has permission to access this project
-        current_user_email = get_jwt_identity()
-        current_user = User.query.filter_by(email=current_user_email).first()
+        current_user = get_current_user()
         
         if not current_user:
             response = jsonify({'error': 'User not found'})

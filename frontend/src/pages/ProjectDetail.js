@@ -212,31 +212,8 @@ function ProjectDetail() {
     try {
       await ProjectService.provisionProject(id);
       alert('Project provisioned successfully!');
-      // Refresh project data to show updated provisioning status
-      loadProject();
     } catch (err) {
       setError('Failed to provision project');
-      console.error(err);
-    }
-  };
-
-  const handleReprovision = async () => {
-    try {
-      await ProjectService.reprovisionProject(id);
-      alert('Project reprovisioned successfully!');
-      // Refresh project data to show updated provisioning status
-      loadProject();
-    } catch (err) {
-      setError('Failed to reprovision project');
-      console.error(err);
-    }
-  };
-
-  const handleDownloadAll = async () => {
-    try {
-      await ProjectService.downloadAllStartupKits(id);
-    } catch (err) {
-      setError('Failed to download all startup kits');
       console.error(err);
     }
   };
@@ -462,18 +439,6 @@ function ProjectDetail() {
           >
             Provision Project
           </Button>
-          {project.provisioned && (
-            <Button
-              variant="outlined"
-              color="warning"
-              startIcon={<ProvisionIcon />}
-              onClick={handleReprovision}
-              disabled={!canEditProject()}
-              title={!canEditProject() ? "Only project creators can reprovision projects" : ""}
-            >
-              Reprovision Project
-            </Button>
-          )}
           <Button
             variant="contained"
             startIcon={<DownloadIcon />}
@@ -483,18 +448,6 @@ function ProjectDetail() {
           >
             Download Server Kit
           </Button>
-          {project.provisioned && (
-            <Button
-              variant="contained"
-              color="success"
-              startIcon={<DownloadIcon />}
-              onClick={() => handleDownloadAll()}
-              disabled={!canEditProject()}
-              title={!canEditProject() ? "Only project creators can download all startup kits" : ""}
-            >
-              Download All Startup Kits
-            </Button>
-          )}
         </Box>
       </Box>
 

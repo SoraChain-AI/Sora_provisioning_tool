@@ -28,7 +28,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-const drawerWidth = 240;
+const drawerWidth = 200;
 
 const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
@@ -69,9 +69,18 @@ function Layout({ children, user, onLogout }) {
     const drawer = (
         <div>
             <Toolbar>
-                <Typography variant="h6" noWrap component="div" sx={{ fontWeight: 'bold' }}>
-                    Sorachain Dashboard
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+                    <img
+                        src="/SoraChainLogo.png"
+                        alt="SoraChain Logo"
+                        style={{
+                            height: '40px',
+                            width: 'auto',
+                            maxWidth: '120px',
+                            marginLeft: '10px'
+                        }}
+                    />
+                </Box>
             </Toolbar>
             <Divider />
             <List>
@@ -126,7 +135,7 @@ function Layout({ children, user, onLogout }) {
                         <MenuIcon />
                     </IconButton>
                     <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-                        Sorachain Provisioning Dashboard
+                        Federated Learning Orchastration Dashboard
                     </Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
                         <Typography variant="body2" sx={{ mr: 2 }}>

@@ -1,6 +1,6 @@
 {
-  "short_name": "Sorachain Dashboard",
-  "name": "Sorachain Provisioning Dashboard",
+  "short_name": "NVFlare Dashboard",
+  "name": "NVFlare Provisioning Dashboard",
   "icons": [
     {
       "src": "favicon.ico",
@@ -12,7 +12,7 @@
   "display": "standalone",
   "theme_color": "#1976d2",
   "background_color": "#ffffff",
-  "description": "Modern dashboard for managing Sorachain federated learning projects"
+  "description": "Modern dashboard for managing NVFlare federated learning projects"
 }
 
 

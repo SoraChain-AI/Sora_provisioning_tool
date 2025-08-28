@@ -16,17 +16,23 @@ console.log('🔧 Axios instance created with baseURL:', API_BASE_URL);
 // Add request interceptor to include auth token
 api.interceptors.request.use(
     (config) => {
+        const token = localStorage.getItem('access_token');
+
         console.log('📤 Request interceptor:', {
             method: config.method?.toUpperCase(),
             url: config.url,
             baseURL: config.baseURL,
             fullURL: config.baseURL + config.url,
-            headers: config.headers
+            hasToken: !!token,
+            tokenLength: token ? token.length : 0,
+            tokenStart: token ? token.substring(0, 20) + '...' : 'none'
         });
 
-        const token = localStorage.getItem('access_token');
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
+            console.log('🔑 Authorization header set:', `Bearer ${token.substring(0, 20)}...`);
+        } else {
+            console.log('⚠️ No access token found in localStorage');
         }
         return config;
     },
@@ -56,7 +62,20 @@ api.interceptors.response.use(
             config: error.config
         });
 
+        // Only auto-logout on 401 if it's not a project update request
+        // This prevents automatic logout during project updates which might be permission-related
         if (error.response?.status === 401) {
+            const url = error.config?.url || '';
+            const method = error.config?.method || '';
+
+            // Don't auto-logout for project updates - let the calling code handle it
+            if (method === 'put' && url.includes('/projects/')) {
+                console.log('🔒 401 on project update - not auto-logging out, letting caller handle it');
+                return Promise.reject(error);
+            }
+
+            // For other 401 errors, proceed with logout
+            console.log('🔒 401 error - logging out user');
             localStorage.removeItem('access_token');
             window.location.href = '/login';
         }

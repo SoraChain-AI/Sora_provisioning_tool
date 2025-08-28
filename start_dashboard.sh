@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Sorachain Provisioning Dashboard - Complete Startup Script
+# NVFlare Provisioning Dashboard - Complete Startup Script
 # This script starts both the backend API and frontend
 
 set -e
@@ -102,8 +102,9 @@ fi
 
 # Install backend dependencies if needed
 echo -e "${BLUE}Checking backend dependencies...${NC}"
+cd "$BACKEND_DIR"
 if [ ! -f "requirements.txt" ]; then
-    echo -e "${RED}Error: requirements.txt not found in project root${NC}"
+    echo -e "${RED}Error: requirements.txt not found in backend directory${NC}"
     exit 1
 fi
 
@@ -117,6 +118,7 @@ fi
 
 # Start backend
 echo -e "${BLUE}Starting backend API...${NC}"
+cd "$BACKEND_DIR"
 echo -e "${GREEN}Backend will be available at: http://localhost:$BACKEND_PORT${NC}"
 echo -e "${GREEN}API endpoints: http://localhost:$BACKEND_PORT/api/v1${NC}"
 echo ""
