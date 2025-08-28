@@ -20,6 +20,8 @@ import {
     Alert,
     LinearProgress,
     Tooltip,
+    FormControlLabel,
+    Checkbox,
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -40,9 +42,23 @@ function Projects() {
     const [currentUser, setCurrentUser] = useState(null);
     const [formData, setFormData] = useState({
         name: '',
+        short_name: '',
+        title: '',
         description: '',
         scheme: 'grpc',
         server_name: 'FLServer.com',
+        app_location: 'nvflare/nvflare',
+        overseer_agent_path: 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+        overseer_agent_args: '{"sp_end_point": "FLServer.com:8002:8003"}',
+        project_props: '{}',
+        server_props: '{}',
+        api_version: 3,
+        ha_mode: false,
+        cc_mode: false,
+        frozen: false,
+        public: false,
+        starting_date: '',
+        end_date: '',
     });
 
     useEffect(() => {
@@ -86,9 +102,23 @@ function Projects() {
             setEditingProject(project);
             setFormData({
                 name: project.name,
+                short_name: project.short_name || '',
+                title: project.title || '',
                 description: project.description || '',
                 scheme: project.scheme || 'grpc',
                 server_name: project.server_name || 'FLServer.com',
+                app_location: project.app_location || 'nvflare/nvflare',
+                overseer_agent_path: project.overseer_agent_path || 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                overseer_agent_args: project.overseer_agent_args || '{"sp_end_point": "FLServer.com:8002:8003"}',
+                project_props: project.project_props || '{}',
+                server_props: project.server_props || '{}',
+                api_version: project.api_version || 3,
+                ha_mode: project.ha_mode || false,
+                cc_mode: project.cc_mode || false,
+                frozen: project.frozen || false,
+                public: project.public || false,
+                starting_date: project.starting_date || '',
+                end_date: project.end_date || '',
             });
         } else {
             setEditingProject(null);
@@ -97,6 +127,15 @@ function Projects() {
                 description: '',
                 scheme: 'grpc',
                 server_name: 'FLServer.com',
+                project_props: '{}',
+                server_props: '{}',
+                api_version: 3,
+                ha_mode: false,
+                cc_mode: false,
+                frozen: false,
+                public: false,
+                starting_date: '',
+                end_date: '',
             });
         }
         setOpenDialog(true);
@@ -107,9 +146,23 @@ function Projects() {
         setEditingProject(null);
         setFormData({
             name: '',
+            short_name: '',
+            title: '',
             description: '',
             scheme: 'grpc',
             server_name: 'FLServer.com',
+            app_location: 'nvflare/nvflare',
+            overseer_agent_path: 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+            overseer_agent_args: '{"sp_end_point": "FLServer.com:8002:8003"}',
+            project_props: '{}',
+            server_props: '{}',
+            api_version: 3,
+            ha_mode: false,
+            cc_mode: false,
+            frozen: false,
+            public: false,
+            starting_date: '',
+            end_date: '',
         });
     };
 
@@ -377,6 +430,160 @@ function Projects() {
                                     value={formData.server_name}
                                     onChange={(e) => setFormData({ ...formData, server_name: e.target.value })}
                                     placeholder="e.g., FLServer.com"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="Short Name"
+                                    value={formData.short_name}
+                                    onChange={(e) => setFormData({ ...formData, short_name: e.target.value })}
+                                    placeholder="e.g., example"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="Title"
+                                    value={formData.title}
+                                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                                    placeholder="e.g., Example Project Title"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="App Location"
+                                    value={formData.app_location}
+                                    onChange={(e) => setFormData({ ...formData, app_location: e.target.value })}
+                                    placeholder="e.g., nvflare/nvflare"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="Overseer Agent Path"
+                                    value={formData.overseer_agent_path}
+                                    onChange={(e) => setFormData({ ...formData, overseer_agent_path: e.target.value })}
+                                    placeholder="e.g., nvflare.ha.dummy_overseer_agent.DummyOverseerAgent"
+                                />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <TextField
+                                    fullWidth
+                                    label="Overseer Agent Args"
+                                    value={formData.overseer_agent_args}
+                                    onChange={(e) => setFormData({ ...formData, overseer_agent_args: e.target.value })}
+                                    placeholder='{"sp_end_point": "FLServer.com:8002:8003"}'
+                                    multiline
+                                    rows={2}
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="Project Properties"
+                                    value={formData.project_props}
+                                    onChange={(e) => setFormData({ ...formData, project_props: e.target.value })}
+                                    placeholder='{"key": "value"}'
+                                    multiline
+                                    rows={2}
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="Server Properties"
+                                    value={formData.server_props}
+                                    onChange={(e) => setFormData({ ...formData, server_props: e.target.value })}
+                                    placeholder='{"key": "value"}'
+                                    multiline
+                                    rows={2}
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <FormControl fullWidth>
+                                    <InputLabel>API Version</InputLabel>
+                                    <Select
+                                        value={formData.api_version}
+                                        label="API Version"
+                                        onChange={(e) => setFormData({ ...formData, api_version: e.target.value })}
+                                    >
+                                        <MenuItem value={3}>v3</MenuItem>
+                                        <MenuItem value={2}>v2</MenuItem>
+                                    </Select>
+                                </FormControl>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <FormControlLabel
+                                    control={
+                                        <Checkbox
+                                            checked={formData.ha_mode}
+                                            onChange={(e) => setFormData({ ...formData, ha_mode: e.target.checked })}
+                                            name="ha_mode"
+                                        />
+                                    }
+                                    label="High Availability Mode"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <FormControlLabel
+                                    control={
+                                        <Checkbox
+                                            checked={formData.cc_mode}
+                                            onChange={(e) => setFormData({ ...formData, cc_mode: e.target.checked })}
+                                            name="cc_mode"
+                                        />
+                                    }
+                                    label="Cross-Cluster Mode"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <FormControlLabel
+                                    control={
+                                        <Checkbox
+                                            checked={formData.frozen}
+                                            onChange={(e) => setFormData({ ...formData, frozen: e.target.checked })}
+                                            name="frozen"
+                                        />
+                                    }
+                                    label="Frozen"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <FormControlLabel
+                                    control={
+                                        <Checkbox
+                                            checked={formData.public}
+                                            onChange={(e) => setFormData({ ...formData, public: e.target.checked })}
+                                            name="public"
+                                        />
+                                    }
+                                    label="Public"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="Starting Date"
+                                    type="date"
+                                    value={formData.starting_date}
+                                    onChange={(e) => setFormData({ ...formData, starting_date: e.target.value })}
+                                    InputLabelProps={{
+                                        shrink: true,
+                                    }}
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                                <TextField
+                                    fullWidth
+                                    label="End Date"
+                                    type="date"
+                                    value={formData.end_date}
+                                    onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
+                                    InputLabelProps={{
+                                        shrink: true,
+                                    }}
                                 />
                             </Grid>
                         </Grid>

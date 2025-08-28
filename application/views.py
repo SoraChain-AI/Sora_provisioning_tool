@@ -9,6 +9,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from . import db
 from .models import User, Project, Server, Client, Admin, UserApplication
 from .provisioning import NVFlareProvisioningService
+from .nvflare_provisioner import NVFlareProvisionerService
 import io
 import zipfile
 from datetime import datetime
@@ -19,6 +20,7 @@ api_bp = Blueprint('api', __name__)
 
 # Initialize provisioning service
 provisioning_service = NVFlareProvisioningService()
+nvflare_provisioner = NVFlareProvisionerService()
 
 def add_cors_headers(response):
     """Add CORS headers to response"""
@@ -1144,7 +1146,15 @@ def provision_project(project_id):
             response.status_code = 403
             return response
         
-        workspace = provisioning_service.call_nvflare_provision(project_id)
+        # Try using the new NVFlare provisioner first, fallback to CLI if needed
+        try:
+            workspace = nvflare_provisioner.provision_project(project_id)
+            if not workspace:
+                # Fallback to CLI provisioning
+                workspace = provisioning_service.call_nvflare_provision(project_id)
+        except Exception as e:
+            print(f"NVFlare provisioner failed, falling back to CLI: {e}")
+            workspace = provisioning_service.call_nvflare_provision(project_id)
         response = jsonify({
             'message': 'Project provisioned successfully',
             'workspace': workspace
@@ -1181,7 +1191,15 @@ def reprovision_project(project_id):
             response.status_code = 403
             return response
         
-        workspace = provisioning_service.force_reprovision(project_id)
+        # Try using the new NVFlare provisioner first, fallback to CLI if needed
+        try:
+            workspace = nvflare_provisioner.provision_project(project_id, force_reprovision=True)
+            if not workspace:
+                # Fallback to CLI provisioning
+                workspace = provisioning_service.force_reprovision(project_id)
+        except Exception as e:
+            print(f"NVFlare provisioner failed, falling back to CLI: {e}")
+            workspace = provisioning_service.force_reprovision(project_id)
         response = jsonify({
             'message': 'Project reprovisioned successfully',
             'workspace': workspace

@@ -6,6 +6,23 @@ Database Models for Sorachain Provisioning Dashboard
 from datetime import datetime
 from . import db
 
+class CommonMixin(object):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(512), default="")
+    description = db.Column(db.String(512), default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def asdict(self):
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+
+class Organization(CommonMixin, db.Model):
+    def asdict(self):
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns if c.name in ("name",)}
+
+class Role(CommonMixin, db.Model):
+    pass
+
 class User(db.Model):
     """User model for authentication and authorization"""
     id = db.Column(db.Integer, primary_key=True)
@@ -16,23 +33,48 @@ class User(db.Model):
     organization = db.Column(db.String(128), nullable=False)
     approval_state = db.Column(db.Integer, default=0)  # 0: pending, 1: approved, 2: rejected
     download_count = db.Column(db.Integer, default=0)
+    props = db.Column(db.String(1048), default="")  # additional properties - JSON string
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
+    
+    # Additional attributes from NVFlare models
+    organization_id = db.Column(db.Integer, db.ForeignKey("organization.id"), nullable=False)
+    organization_rel = db.relationship("Organization", backref="users")
+    role_id = db.Column(db.Integer, db.ForeignKey("role.id"), nullable=False)
+    role_rel = db.relationship("Role", backref="users")
 
 class Project(db.Model):
     """Project configuration model"""
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128), nullable=False)
-    description = db.Column(db.String(512))
+    short_name = db.Column(db.String(128), default="")
+    title = db.Column(db.String(512), default="")
+    description = db.Column(db.String(2048), default="")
     api_version = db.Column(db.Integer, default=3)
     scheme = db.Column(db.String(64), default='grpc')
     server_name = db.Column(db.String(128), nullable=False, default='FLServer.com')
+    server1 = db.Column(db.String(128), default="")
+    server2 = db.Column(db.String(128), default="")
+    app_location = db.Column(db.String(2048), default="")
+    overseer = db.Column(db.String(128), default="")
+    overseer_agent_path = db.Column(db.String(512), default="nvflare.ha.dummy_overseer_agent.DummyOverseerAgent")
+    overseer_agent_args = db.Column(db.String(2048), default='{"sp_end_point": "FLServer.com:8002:8003"}')
+    root_cert = db.Column(db.String(4096), default="")
+    root_key = db.Column(db.String(4096), default="")
+    project_props = db.Column(db.String(2048), default="")  # additional project properties - JSON string
+    server_props = db.Column(db.String(2048), default="")  # additional server properties - JSON string
+    cc_mode = db.Column(db.Boolean, default=False)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     ha_mode = db.Column(db.Boolean, default=False)
     frozen = db.Column(db.Boolean, default=False)
     public = db.Column(db.Boolean, default=False)
+    starting_date = db.Column(db.String(128), default="")
+    end_date = db.Column(db.String(128), default="")
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Additional attributes from NVFlare models
+    # overseer_agent_path and overseer_agent_args already defined above
 
 class Server(db.Model):
     """Server configuration model"""
@@ -46,6 +88,9 @@ class Server(db.Model):
     approval_state = db.Column(db.Integer, default=1)  # 0: pending, 1: approved, 2: rejected
     download_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Additional attributes from NVFlare models
+    props = db.Column(db.String(2048), default="")  # additional properties - JSON string
 
 class Client(db.Model):
     """Client configuration model"""
@@ -58,7 +103,14 @@ class Client(db.Model):
     gpu_memory = db.Column(db.Integer, default=16)  # GB
     approval_state = db.Column(db.Integer, default=0)  # 0: pending, 1: approved, 2: rejected
     download_count = db.Column(db.Integer, default=0)
+    capacity = db.Column(db.String(2048), default="")  # JSON string for capacity info
+    props = db.Column(db.String(2048), default="")  # additional properties - JSON string
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Additional attributes from NVFlare models
+    organization_id = db.Column(db.Integer, db.ForeignKey("organization.id"), nullable=False)
+    organization = db.relationship("Organization", backref="clients")
+    creator_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
 
 class Admin(db.Model):
     """Admin configuration model"""
@@ -103,9 +155,15 @@ def init_default_data():
             # Create default project
             project = Project(
                 name='Example Sorachain Project',
+                short_name='example',
+                title='Example Sorachain Project',
                 description='Default Sorachain project',
                 scheme='grpc',
                 server_name='FLServer.com',
+                server1='FLServer.com',
+                app_location='nvflare/nvflare',
+                overseer_agent_path='nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                overseer_agent_args='{"sp_end_point": "FLServer.com:8002:8003"}',
                 created_by=admin_user.id
             )
             db.session.add(project)
