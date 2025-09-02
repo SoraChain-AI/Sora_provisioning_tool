@@ -52,7 +52,7 @@ class Project(db.Model):
     description = db.Column(db.String(2048), default="")
     api_version = db.Column(db.Integer, default=3)
     scheme = db.Column(db.String(64), default='grpc')
-    server_name = db.Column(db.String(128), nullable=False, default='FLServer.com')
+    server_name = db.Column(db.String(128), nullable=False, default='')
     server1 = db.Column(db.String(128), default="")
     server2 = db.Column(db.String(128), default="")
     app_location = db.Column(db.String(2048), default="")
@@ -139,6 +139,15 @@ def init_default_data():
     """Initialize default data if database is empty"""
     try:
         if not User.query.first():
+            # Create default organization and role first
+            default_org = Organization(name='example', description='Default Organization')
+            db.session.add(default_org)
+            db.session.flush()
+            
+            default_role = Role(name='admin', description='Administrator Role')
+            db.session.add(default_role)
+            db.session.flush()
+            
             # Create default admin user
             from werkzeug.security import generate_password_hash
             admin_user = User(
@@ -147,7 +156,9 @@ def init_default_data():
                 password_hash=generate_password_hash('admin123'),
                 role='admin',
                 organization='example',
-                approval_state=1
+                approval_state=1,
+                organization_id=default_org.id,
+                role_id=default_role.id
             )
             db.session.add(admin_user)
             db.session.flush()  # Get the admin user ID first
@@ -159,11 +170,11 @@ def init_default_data():
                 title='Example Sorachain Project',
                 description='Default Sorachain project',
                 scheme='grpc',
-                server_name='FLServer.com',
-                server1='FLServer.com',
+                        server_name='',
+        server1='',
                 app_location='nvflare/nvflare',
                 overseer_agent_path='nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-                overseer_agent_args='{"sp_end_point": "FLServer.com:8002:8003"}',
+                overseer_agent_args='{"sp_end_point": "server:8002:8003"}',
                 created_by=admin_user.id
             )
             db.session.add(project)
@@ -172,7 +183,7 @@ def init_default_data():
             # Create default server
             server = Server(
                 project_id=project.id,
-                name='FLServer.com',
+                name='default-server',
                 org='example',
                 fed_learn_port=8002,
                 admin_port=8003,
@@ -180,6 +191,20 @@ def init_default_data():
                 approval_state=1
             )
             db.session.add(server)
+            
+            # Create default client
+            client = Client(
+                project_id=project.id,
+                name='site-1',
+                org='example',
+                description='Default client',
+                num_gpus=1,
+                gpu_memory=16,
+                approval_state=1,
+                organization_id=default_org.id,
+                creator_id=admin_user.id
+            )
+            db.session.add(client)
             
             # Create default admin
             admin = Admin(

@@ -46,10 +46,8 @@ function Projects() {
         title: '',
         description: '',
         scheme: 'grpc',
-        server_name: 'FLServer.com',
-        app_location: 'nvflare/nvflare',
-        overseer_agent_path: 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-        overseer_agent_args: '{"sp_end_point": "FLServer.com:8002:8003"}',
+        server_name: '',
+        app_location: 'docker container',
         project_props: '{}',
         server_props: '{}',
         api_version: 3,
@@ -106,10 +104,8 @@ function Projects() {
                 title: project.title || '',
                 description: project.description || '',
                 scheme: project.scheme || 'grpc',
-                server_name: project.server_name || 'FLServer.com',
-                app_location: project.app_location || 'nvflare/nvflare',
-                overseer_agent_path: project.overseer_agent_path || 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-                overseer_agent_args: project.overseer_agent_args || '{"sp_end_point": "FLServer.com:8002:8003"}',
+                server_name: project.server_name || '',
+                app_location: project.app_location || 'docker container',
                 project_props: project.project_props || '{}',
                 server_props: project.server_props || '{}',
                 api_version: project.api_version || 3,
@@ -126,7 +122,7 @@ function Projects() {
                 name: '',
                 description: '',
                 scheme: 'grpc',
-                server_name: 'FLServer.com',
+                server_name: '',
                 project_props: '{}',
                 server_props: '{}',
                 api_version: 3,
@@ -150,10 +146,8 @@ function Projects() {
             title: '',
             description: '',
             scheme: 'grpc',
-            server_name: 'FLServer.com',
-            app_location: 'nvflare/nvflare',
-            overseer_agent_path: 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
-            overseer_agent_args: '{"sp_end_point": "FLServer.com:8002:8003"}',
+            server_name: '',
+            app_location: 'docker container',
             project_props: '{}',
             server_props: '{}',
             api_version: 3,
@@ -296,17 +290,17 @@ function Projects() {
 
                                     <Box display="flex" gap={1} mb={3}>
                                         <Chip
-                                            label={`${project.servers?.length || 0} Servers`}
+                                            label={`${project.server_count || 0} Servers`}
                                             size="small"
                                             variant="outlined"
                                         />
                                         <Chip
-                                            label={`${project.clients?.length || 0} Clients`}
+                                            label={`${project.client_count || 0} Clients`}
                                             size="small"
                                             variant="outlined"
                                         />
                                         <Chip
-                                            label={`${project.admins?.length || 0} Admins`}
+                                            label={`${project.admin_count || 0} Admins`}
                                             size="small"
                                             variant="outlined"
                                         />
@@ -429,7 +423,7 @@ function Projects() {
                                     label="Server Name"
                                     value={formData.server_name}
                                     onChange={(e) => setFormData({ ...formData, server_name: e.target.value })}
-                                    placeholder="e.g., FLServer.com"
+                                    placeholder="e.g., myserver.com"
                                 />
                             </Grid>
                             <Grid item xs={12} sm={6}>
@@ -456,27 +450,7 @@ function Projects() {
                                     label="App Location"
                                     value={formData.app_location}
                                     onChange={(e) => setFormData({ ...formData, app_location: e.target.value })}
-                                    placeholder="e.g., nvflare/nvflare"
-                                />
-                            </Grid>
-                            <Grid item xs={12} sm={6}>
-                                <TextField
-                                    fullWidth
-                                    label="Overseer Agent Path"
-                                    value={formData.overseer_agent_path}
-                                    onChange={(e) => setFormData({ ...formData, overseer_agent_path: e.target.value })}
-                                    placeholder="e.g., nvflare.ha.dummy_overseer_agent.DummyOverseerAgent"
-                                />
-                            </Grid>
-                            <Grid item xs={12}>
-                                <TextField
-                                    fullWidth
-                                    label="Overseer Agent Args"
-                                    value={formData.overseer_agent_args}
-                                    onChange={(e) => setFormData({ ...formData, overseer_agent_args: e.target.value })}
-                                    placeholder='{"sp_end_point": "FLServer.com:8002:8003"}'
-                                    multiline
-                                    rows={2}
+                                    placeholder="e.g., docker container"
                                 />
                             </Grid>
                             <Grid item xs={12} sm={6}>

@@ -16,8 +16,11 @@ from .models import Project, Server, Client, Admin
 
 # Import NVFlare provisioner components
 try:
-    from nvflare.lighter.constants import PropKey
-    from nvflare.lighter.entity import Project as ProvProject
+    from nvflare.lighter.constants import (
+        PropKey, TemplateSectionKey, ProvFileName, ConnSecurity, 
+        CtxKey, ProvisionMode
+    )
+    from nvflare.lighter.entity import Project as ProvProject, Participant, ParticipantType
     from nvflare.lighter.impl.aws import AWSBuilder
     from nvflare.lighter.impl.azure import AzureBuilder
     from nvflare.lighter.impl.cert import CertBuilder
@@ -47,6 +50,247 @@ class DummyLogger:
     def warning(self, msg: str):
         pass
 
+class CustomStaticFileBuilder(StaticFileBuilder):
+    """Custom StaticFileBuilder that configures server to listen on both ports"""
+    
+    def _build_server(self, server, ctx):
+        """Override _build_server to configure multiple port listening"""
+        project = ctx.get_project()
+        dest_dir = ctx.get_kit_dir(server)
+
+        admin_port = ctx.get(CtxKey.ADMIN_PORT)
+        fed_learn_port = ctx.get(CtxKey.FED_LEARN_PORT)
+        
+        # Use single port target for service discovery (standard NVFlare behavior)
+        target = f"{server.name}:{fed_learn_port}"  # Only fed_learn_port for service discovery
+        sp_end_point = f"{server.name}:{fed_learn_port}:{admin_port}"
+        conn_sec = self._build_conn_properties(server, ctx)
+
+        print(f"🔧 CustomStaticFileBuilder: Setting server target to {target}")
+        print(f"🔧 CustomStaticFileBuilder: Server will listen on port {fed_learn_port}")
+
+        ctx.build_from_template(
+            dest_dir,
+            TemplateSectionKey.FED_SERVER,
+            ProvFileName.FED_SERVER_JSON,
+            replacement={
+                "name": project.name,
+                "target": target,  # Single port for service discovery
+                "scheme": "grpc",
+                "conn_sec": conn_sec,
+                "sp_end_point": sp_end_point,
+            },
+        )
+
+        # Configure server to listen on fed_learn_port
+        self._configure_server_listeners(server, ctx, fed_learn_port, admin_port)
+
+        # Call the rest of the original _build_server method
+        self._build_comm_config_for_internal_listener(server)
+
+        replacement_dict = {
+            "admin_port": admin_port,
+            "fed_learn_port": fed_learn_port,
+            "config_folder": self.config_folder,
+            "docker_image": self.docker_image,
+            "org_name": server.org,
+            "type": "server",
+            "app_name": "server_train",
+            "cln_uid": "",
+        }
+
+        if self.docker_image:
+            ctx.build_from_template(
+                dest_dir,
+                TemplateSectionKey.DOCKER_SERVER_SH,
+                ProvFileName.DOCKER_SH,
+                replacement=replacement_dict,
+                exe=True,
+            )
+
+        ctx.build_from_template(
+            dest_dir,
+            TemplateSectionKey.START_SERVER_SH,
+            ProvFileName.START_SH,
+            replacement={"ha_mode": "false"},
+            exe=True,
+        )
+
+        ctx.build_from_template(
+            dest_dir,
+            TemplateSectionKey.SUB_START_SH,
+            ProvFileName.SUB_START_SH,
+            replacement=replacement_dict,
+            exe=True,
+        )
+
+        ctx.build_from_template(dest_dir, TemplateSectionKey.STOP_FL_SH, ProvFileName.STOP_FL_SH, exe=True)
+
+        # local folder creation
+        dest_dir = ctx.get_local_dir(server)
+
+        ctx.build_from_template(dest_dir, TemplateSectionKey.LOG_CONFIG, ProvFileName.LOG_CONFIG_DEFAULT, exe=False)
+
+        ctx.build_from_template(
+            dest_dir, TemplateSectionKey.LOCAL_SERVER_RESOURCES, ProvFileName.RESOURCES_JSON_DEFAULT, exe=False
+        )
+
+        ctx.build_from_template(
+            dest_dir, TemplateSectionKey.SAMPLE_PRIVACY, ProvFileName.PRIVACY_JSON_SAMPLE, exe=False
+        )
+
+        # other builder (e.g. CC) can set the AUTHZ_SECTION_KEY to specify authorization policies for the server
+        authz_section_key = server.get_prop(PropKey.AUTHZ_SECTION_KEY, TemplateSectionKey.DEFAULT_AUTHZ)
+
+        ctx.build_from_template(dest_dir, authz_section_key, ProvFileName.AUTHORIZATION_JSON_DEFAULT, exe=False)
+
+        # workspace folder file
+        dest_dir = ctx.get_ws_dir(server)
+        ctx.build_from_template(dest_dir, TemplateSectionKey.SERVER_README, ProvFileName.README_TXT, exe=False)
+        
+        # Post-process the fed_server.json to ensure dual-port target
+        self._fix_fed_server_target(dest_dir, server, fed_learn_port, admin_port)
+
+    def _configure_server_listeners(self, server, ctx, fed_learn_port: int, admin_port: int):
+        """Configure server to listen on fed_learn_port"""
+        print(f"🔧 Configuring server listener on port {fed_learn_port}")
+        
+        # Configure the listener for federated learning and admin operations
+        listener_config = {
+            PropKey.SCHEME: 'grpc',
+            PropKey.DEFAULT_HOST: server.get_default_host(),
+            PropKey.PORT: fed_learn_port,
+            PropKey.CONN_SECURITY: server.get_prop_fb(PropKey.CONN_SECURITY, 'mtls')
+        }
+        
+        # Set the listening_host for the server
+        server.set_prop(PropKey.LISTENING_HOST, listener_config)
+        
+        print(f"🔧 Server listener configured:")
+        print(f"  - Listener: {listener_config}")
+    
+    def _fix_fed_server_target(self, dest_dir, server, fed_learn_port: int, admin_port: int):
+        """Post-process fed_server.json to ensure correct target format"""
+        import json
+        import os
+        
+        fed_server_path = os.path.join(dest_dir, "..", "startup", ProvFileName.FED_SERVER_JSON)
+        if not os.path.exists(fed_server_path):
+            print(f"⚠️  fed_server.json not found at {fed_server_path}")
+            return
+        
+        try:
+            with open(fed_server_path, 'r') as f:
+                fed_server_data = json.load(f)
+            
+            # Ensure the target uses single port (gRPC limitation)
+            if 'servers' in fed_server_data and len(fed_server_data['servers']) > 0:
+                server_config = fed_server_data['servers'][0]
+                if 'service' in server_config:
+                    # Set the target to single port for service discovery
+                    new_target = f"{server.name}:{fed_learn_port}"
+                    
+                    server_config['service']['target'] = new_target
+                    print(f"🔧 Fixed fed_server.json target to: {new_target}")
+                    
+                    # Write back the modified JSON
+                    with open(fed_server_path, 'w') as f:
+                        json.dump(fed_server_data, f, indent=2)
+                    print(f"✅ Updated {fed_server_path}")
+                else:
+                    print(f"⚠️  No 'service' section found in fed_server.json")
+            else:
+                print(f"⚠️  No 'servers' section found in fed_server.json")
+                
+        except Exception as e:
+            print(f"❌ Error fixing fed_server.json: {e}")
+    
+    def prepare_admin_config(self, admin, ctx):
+        """Override prepare_admin_config to add overseer_agent configuration"""
+        project = ctx.get_project()
+        server = project.get_server()
+        conn_sec = server.get_prop_fb(PropKey.CONN_SECURITY)
+        if not conn_sec:
+            conn_sec = 'mtls'
+
+        uid_source = "user_input"
+        provision_mode = ctx.get_provision_mode()
+        if provision_mode == 'poc':
+            uid_source = "cert"
+
+        conn_host, conn_port = self._determine_conn_target(admin, ctx)
+        if not conn_port:
+            conn_port = ctx.get(CtxKey.ADMIN_PORT)
+
+        # Get overseer agent configuration from project, but force admin to use fed_learn_port (8002)
+        fed_learn_port = ctx.get(CtxKey.FED_LEARN_PORT)
+        if not fed_learn_port:
+            fed_learn_port = 8002
+        # For admin, ensure both ports in sp_end_point point to fed_learn_port so it connects on 8002
+        sp_end_point = f"{server.name}:{fed_learn_port}:{fed_learn_port}"
+        
+        print(f"🔧 CustomStaticFileBuilder: Adding overseer_agent to admin config with sp_end_point: {sp_end_point}")
+
+        replacement_dict = {
+            "project_name": project.name,
+            "server_identity": server.name,
+            "scheme": self.scheme,
+            "conn_sec": conn_sec,
+            "host": conn_host,
+            "port": conn_port,
+            "uid_source": uid_source,
+        }
+        
+        ctx.build_from_template(
+            dest_dir=ctx.get_kit_dir(admin),
+            temp_section=TemplateSectionKey.FED_ADMIN,
+            file_name=ProvFileName.FED_ADMIN_JSON,
+            replacement=replacement_dict,
+        )
+
+        # Add overseer_agent configuration to fed_admin.json after template is built
+        self._add_overseer_agent_to_admin_config(ctx.get_kit_dir(admin), sp_end_point)
+
+        # create default resources in local
+        ctx.build_from_template(
+            dest_dir=ctx.get_local_dir(admin),
+            temp_section=TemplateSectionKey.DEFAULT_ADMIN_RESOURCES,
+            file_name=ProvFileName.RESOURCES_JSON_DEFAULT,
+        )
+    
+    def _add_overseer_agent_to_admin_config(self, dest_dir, sp_end_point):
+        """Add overseer_agent configuration to fed_admin.json"""
+        import json
+        import os
+        
+        fed_admin_path = os.path.join(dest_dir, ProvFileName.FED_ADMIN_JSON)
+        if not os.path.exists(fed_admin_path):
+            print(f"⚠️  fed_admin.json not found at {fed_admin_path}")
+            return
+        
+        try:
+            with open(fed_admin_path, 'r') as f:
+                fed_admin_data = json.load(f)
+            
+            # Add overseer_agent configuration
+            if 'admin' not in fed_admin_data or not isinstance(fed_admin_data['admin'], dict):
+                fed_admin_data['admin'] = {}
+            fed_admin_data['admin']['overseer_agent'] = {
+                "path": "nvflare.ha.dummy_overseer_agent.DummyOverseerAgent",
+                "args": {
+                    "sp_end_point": sp_end_point
+                }
+            }
+            
+            # Write back the modified JSON
+            with open(fed_admin_path, 'w') as f:
+                json.dump(fed_admin_data, f, indent=2)
+            print(f"✅ Added overseer_agent to {fed_admin_path} with sp_end_point: {sp_end_point}")
+                
+        except Exception as e:
+            print(f"❌ Error adding overseer_agent to fed_admin.json: {e}")
+
+
 class NVFlareProvisionerService:
     """Service for generating NVFlare project configurations using the provisioner directly"""
     
@@ -59,11 +303,12 @@ class NVFlareProvisionerService:
         overseer_agent = {
             "path": "nvflare.ha.dummy_overseer_agent.DummyOverseerAgent",
             "overseer_exists": False,
-            "args": {"sp_end_point": "server:8002:8003"},
+            "args": {"sp_end_point": "server:8002:8003"},  # Default, will be overridden by project props
         }
         
         builders = [
             WorkspaceBuilder(),
+            # CustomStaticFileBuilder(
             StaticFileBuilder(
                 config_folder="config",
                 scheme=scheme,
@@ -82,9 +327,15 @@ class NVFlareProvisionerService:
     
     def provision_project(self, project_id, force_reprovision=False):
         """Provision a project using the NVFlare provisioner"""
+        print(f"🔍 Starting provision_project with project_id: {project_id}, force_reprovision: {force_reprovision}")
+        print(f"🔍 NVFLARE_AVAILABLE: {NVFLARE_AVAILABLE}")
+        
         if not NVFLARE_AVAILABLE:
             print("NVFlare not available, falling back to CLI approach")
             return self._provision_via_cli(project_id, force_reprovision)
+        
+        print("🔍 NVFlare is available, proceeding with API approach")
+        print("🔍 Creating custom project.yml for full configuration control")
         
         try:
             # Get project data
@@ -99,6 +350,26 @@ class NVFlareProvisionerService:
             print(f"Provisioning project: {project.name}")
             print(f"Servers: {len(servers)}, Clients: {len(clients)}, Admins: {len(admins)}")
             
+            # Validate that we have at least one server and one client
+            if not servers:
+                raise ValueError("No servers configured for this project. Please add at least one server before provisioning.")
+            
+            if not clients:
+                raise ValueError("No clients configured for this project. Please add at least one client before provisioning.")
+            
+            # Validate that all names are properly set
+            for server in servers:
+                if not server.name or server.name.strip() == '':
+                    raise ValueError(f"Server has empty name. Please set a valid server name.")
+                if not server.org or server.org.strip() == '':
+                    raise ValueError(f"Server '{server.name}' has empty organization. Please set a valid organization.")
+            
+            for client in clients:
+                if not client.name or client.name.strip() == '':
+                    raise ValueError(f"Client has empty name. Please set a valid client name.")
+                if not client.org or client.org.strip() == '':
+                    raise ValueError(f"Client '{client.name}' has empty organization. Please set a valid organization.")
+            
             # Check if already provisioned
             if not force_reprovision:
                 existing_workspace = self._get_existing_workspace(project_id)
@@ -106,103 +377,203 @@ class NVFlareProvisionerService:
                     print(f"Project {project_id} already provisioned, using existing workspace: {existing_workspace}")
                     return existing_workspace
             
-            # Create temporary directory for provisioning
+                                        # Create temporary directory for provisioning
+            print("🔍 Creating temporary directory...")
             with tempfile.TemporaryDirectory() as tmp_dir:
-                print(f"Using temporary directory: {tmp_dir}")
+                print(f"✅ Using temporary directory: {tmp_dir}")
                 
                 # Get provisioner
+                print("🔍 Getting project scheme and docker image...")
                 scheme = getattr(project, 'scheme', 'grpc')
                 docker_image = getattr(project, 'app_location', 'nvflare/nvflare')
                 if docker_image and ' ' in docker_image:
                     docker_image = docker_image.split(" ")[-1]
                 
+                print(f"✅ Scheme: {scheme}, Docker image: {docker_image}")
+                
+                # Create custom project.yml with correct configuration from database
+                print("🔍 Creating custom project.yml...")
+                project_yml_path = os.path.join(tmp_dir, 'project.yml')
+                self._create_custom_project_yml(project_yml_path, project, servers, clients, admins)
+                print(f"✅ Custom project.yml created: {project_yml_path}")
+                
+                # Use the API approach with the provisioner
+                print(f"🔍 Getting provisioner with scheme: {scheme}, docker_image: {docker_image}")
                 provisioner = self._get_provisioner(tmp_dir, scheme, docker_image)
+                print(f"✅ Provisioner created: {provisioner}")
                 
-                # Create project properties
-                proj_props = {PropKey.API_VERSION: getattr(project, 'api_version', 3)}
-                if hasattr(project, 'project_props') and project.project_props:
-                    try:
-                        proj_props.update(json.loads(project.project_props))
-                    except:
-                        pass
+                # Use the custom project.yml file we created
+                print("🔍 Using custom project.yml for provisioning...")
+                print(f"🔍 Project.yml path: {project_yml_path}")
                 
-                # Create the provisioner project
+                # Verify the project.yml content
+                with open(project_yml_path, 'r') as f:
+                    yaml_content = f.read()
+                    print(f"📋 Project.yml content:")
+                    print(yaml_content)
+                
+                # Create a minimal ProvProject - the StaticFileBuilder will read from project.yml
+                project_name = getattr(project, 'short_name', project.name)
+                if not project_name or project_name.strip() == '':
+                    project_name = f"project_{project_id}"
+                
+                print(f"Creating minimal ProvProject with name: {project_name}")
+                
+                # Set critical properties to override template defaults
+                critical_props = {
+                    PropKey.SCHEME: 'grpc',  # Force grpc scheme
+                }
+                
+                # Add overseer agent configuration to override template
+                if servers:
+                    primary_server = servers[0]
+                    overseer_endpoint = f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
+                    critical_props['overseer_agent'] = {
+                        'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                        'overseer_exists': False,
+                        'args': {
+                            'sp_end_point': overseer_endpoint
+                        }
+                    }
+                    print(f"🔍 Set critical props overseer sp_end_point: {overseer_endpoint}")
+                
                 prov_project = ProvProject(
-                    getattr(project, 'short_name', project.name),
-                    getattr(project, 'description', ''),
-                    props=proj_props,
+                    project_name,
+                    getattr(project, 'description', '') or f'Project {project_name}',
+                    props=critical_props,  # Critical props to override templates
                     root_private_key=None,  # We'll generate this
                     serialized_root_cert=None,  # We'll generate this
                 )
                 
-                # Add servers
-                for server in servers:
+                
+                # Add minimal server/client/admin structure to ProvProject (required by provisioner)
+                # The actual configuration will come from the custom project.yml
+                if servers:
+                    # primary_server = servers[0]
+                    # print(f"🔍 primary_server: {primary_server.__dict__.__str__()}")
+
                     server_props = {
-                        PropKey.FED_LEARN_PORT: server.fed_learn_port,
-                        PropKey.ADMIN_PORT: server.admin_port,
-                        PropKey.DEFAULT_HOST: server.name,
-                        PropKey.CONN_SECURITY: getattr(server, 'connection_security', 'mtls'),
+                        PropKey.FED_LEARN_PORT: getattr(primary_server, 'fed_learn_port', 8002),
+                        PropKey.ADMIN_PORT: getattr(primary_server, 'admin_port', 8003),
+                        PropKey.DEFAULT_HOST: getattr(primary_server, 'name', 'FLServer.com'),          
+                        PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls'),
+                        # Force the scheme to be grpc
+                        PropKey.SCHEME: 'grpc',
+                        # Configure server to listen on fed_learn_port
+                        PropKey.LISTENING_HOST: {
+                            PropKey.SCHEME: 'grpc',
+                            PropKey.DEFAULT_HOST: primary_server.name,
+                            PropKey.PORT: primary_server.fed_learn_port,  # Port 8002
+                            PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls')
+                        },
+                        # Enable admin command modules
+                        'enable_admin_commands': True,
+                        'cmd_modules': ['sys_cmd', 'job_cmds', 'training_cmds', 'info_coll_cmd'],
+                        # Force command module registration
+                        'force_cmd_registration': True,
+                        'admin_cmd_modules': ['sys_cmd', 'job_cmds', 'training_cmds', 'info_coll_cmd', 'shell_cmd']
                     }
                     
-                    if hasattr(server, 'props') and server.props:
+                    # Add any additional server properties from database
+                    if hasattr(primary_server, 'props') and primary_server.props:
                         try:
-                            server_props.update(json.loads(server.props))
+                            server_props.update(json.loads(primary_server.props))
+                            print(f"🔍 additotional Updated server props: {server_props}")
                         except:
                             pass
                     
                     prov_project.set_server(
-                        name=server.name,
-                        org=server.org,
-                        props=server_props,
+                        name=primary_server.name,
+                        org=primary_server.org or 'nvidia',
+                        props=server_props
                     )
+                    print(f"🔍 Added server to ProvProject: {primary_server.name}")
+                    print(f"🔍 Server props: {server_props}")
                 
-                # Add clients
-                for client in clients:
+                if clients:
+                    primary_client = clients[0]
                     client_props = {}
                     
-                    if hasattr(client, 'capacity') and client.capacity:
+                    # Add capacity if available
+                    if hasattr(primary_client, 'capacity') and primary_client.capacity:
                         try:
-                            client_props[PropKey.CAPACITY] = json.loads(client.capacity)
+                            client_props[PropKey.CAPACITY] = json.loads(primary_client.capacity)
                         except:
                             pass
                     
-                    if hasattr(client, 'props') and client.props:
+                    # Add any additional client properties from database
+                    if hasattr(primary_client, 'props') and primary_client.props:
                         try:
-                            client_props.update(json.loads(client.props))
+                            client_props.update(json.loads(primary_client.props))
                         except:
                             pass
                     
                     prov_project.add_client(
-                        name=client.name,
-                        org=client.org,
+                        name=primary_client.name,
+                        org=primary_client.org or 'nvidia',
                         props=client_props
                     )
+                    print(f"🔍 Added client to ProvProject: {primary_client.name}")
+                    print(f"🔍 Client props: {client_props}")
                 
-                # Add admins
-                for admin in admins:
-                    admin_props = {PropKey.ROLE: getattr(admin, 'role', 'project_admin')}
+                if admins:
+                    primary_admin = admins[0]
+                    admin_props = {
+                        PropKey.ROLE: getattr(primary_admin, 'role', 'project_admin'),
+                        # Admin connects to server's fed_learn_port (8002) for all operations
+                        PropKey.CONNECT_TO: {
+                            PropKey.NAME: primary_server.name,
+                            PropKey.HOST: primary_server.name,
+                            PropKey.PORT: primary_server.fed_learn_port,  # Port 8002
+                            PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls')
+                        }
+                    }
                     
-                    if hasattr(admin, 'props') and admin.props:
+                    # Add any additional admin properties from database
+                    if hasattr(primary_admin, 'props') and primary_admin.props:
                         try:
-                            admin_props.update(json.loads(admin.props))
+                            admin_props.update(json.loads(primary_admin.props))
                         except:
                             pass
                     
                     prov_project.add_admin(
-                        name=admin.email,
-                        org=admin.org,
+                        name=primary_admin.email,
+                        org=primary_admin.org or 'nvidia',
                         props=admin_props
                     )
                 
-                # Provision the project
-                print("Calling provisioner.provision()...")
-                ctx = provisioner.provision(prov_project, logger=DummyLogger())
-                result_dir = ctx.get_result_location()
+                print(f"ProvProject created successfully: {prov_project._all_names}, {prov_project._participants_by_types}, {prov_project.props}, {prov_project.overseer}, {prov_project.server},  ")
+
+                print(f"🔍 ProvProject: {prov_project.props}")
+                # Provision the project using the custom project.yml
+                print("Calling provisioner.provision() with custom project.yml...")
+                result_ctx = provisioner.provision(prov_project)
+                # print(f"Provisioning completed. Result context: {result_ctx}")
                 
-                print(f"Provisioning completed. Result directory: {result_dir}")
-                print(f"Result contents: {os.listdir(result_dir)}")
+                # Extract the result directory from the context
+                if hasattr(result_ctx, 'get_result_location'):
+                    result_dir = result_ctx.get_result_location()
+                elif hasattr(result_ctx, 'result_location'):
+                    result_dir = result_ctx.result_location
+                else:
+                    # Try to find the result directory in the temporary directory
+                    result_dir = os.path.join(tmp_dir, "project_2", "prod_00")
+                    if not os.path.exists(result_dir):
+                        # Look for any directory that might contain the results
+                        for item in os.listdir(tmp_dir):
+                            item_path = os.path.join(tmp_dir, item)
+                            if os.path.isdir(item_path):
+                                prod_dir = os.path.join(item_path, "prod_00")
+                                if os.path.exists(prod_dir):
+                                    result_dir = prod_dir
+                                    break
                 
-                # Copy to final workspace location
+                print(f"Result directory: {result_dir}")
+                
+                if not result_dir or not os.path.exists(result_dir):
+                    raise ValueError(f"Could not find result directory from provisioning")
+                
+                # Copy to final workspace
                 final_workspace = os.path.join(self.workspace_dir, f"project_{project_id}")
                 if os.path.exists(final_workspace):
                     shutil.rmtree(final_workspace)
@@ -214,7 +585,9 @@ class NVFlareProvisionerService:
                 
         except Exception as e:
             print(f"Error provisioning project: {e}")
-            raise
+            import traceback
+            traceback.print_exc()
+            return None
     
     def _provision_via_cli(self, project_id, force_reprovision=False):
         """Fallback to CLI provisioning if NVFlare is not available"""
@@ -304,3 +677,223 @@ class NVFlareProvisionerService:
                     all_kits['admin'] = (kit_buffer, kit_name)
         
         return all_kits
+    
+
+    def _create_custom_project_yml(self, project_yml_path, project, servers, clients, admins):
+        """Create a custom project.yml with the correct configurations"""
+        import yaml
+        
+        # Create the project configuration
+        project_config = {
+            'api_version': 3,
+            'name': getattr(project, 'short_name', project.name) or f"project_{project.id}",
+            'description': getattr(project, 'description', '') or f'Project {project.name}',
+            'scheme': 'grpc',  # Force grpc scheme
+            'overseer_agent': {
+                'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                'overseer_exists': False,
+                'args': {}
+            }
+        }
+        
+        # Set overseer endpoint if we have servers
+        if servers:
+            primary_server = servers[0]
+            project_config['overseer_agent']['args']['sp_end_point'] = f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
+        else:
+            project_config['overseer_agent']['args']['sp_end_point'] = "server:8002:8003"
+        
+        # Add servers
+        if servers:
+            project_config['servers'] = []
+            for server in servers:
+                server_config = {
+                    'name': server.name,
+                    'org': server.org or 'nvidia',
+                    'props': {
+                        'connection_security': getattr(server, 'connection_security', 'mtls'),
+                        'fed_learn_port': server.fed_learn_port,
+                        'admin_port': server.admin_port,
+                        'scheme': 'grpc',  # Force grpc scheme
+                        'service_target': f"{server.name}:{server.fed_learn_port}:{server.admin_port}"  # Custom property for service target
+                    }
+                }
+                project_config['servers'].append(server_config)
+        
+        # Add clients
+        if clients:
+            project_config['clients'] = []
+            for client in clients:
+                client_config = {
+                    'name': client.name,
+                    'org': client.org or 'nvidia',
+                    'props': {}
+                }
+                if hasattr(client, 'capacity') and client.capacity:
+                    try:
+                        client_config['props']['capacity'] = json.loads(client.capacity)
+                    except:
+                        pass
+                project_config['clients'].append(client_config)
+        
+        # Add admins
+        if admins:
+            project_config['admins'] = []
+            for admin in admins:
+                admin_config = {
+                    'name': admin.email,
+                    'org': admin.org or 'nvidia',
+                    'props': {
+                        'role': getattr(admin, 'role', 'project_admin')
+                    }
+                }
+                project_config['admins'].append(admin_config)
+        
+        # Write the configuration to file
+        with open(project_yml_path, 'w') as f:
+            yaml.dump(project_config, f, default_flow_style=False, sort_keys=False)
+        
+        print(f"Created custom project.yml: {project_yml_path}")
+        print(f"Project config: {yaml.dump(project_config, default_flow_style=False, sort_keys=False)}")
+    
+    def _provision_via_cli_with_custom_yml(self, project_id, project_yml_path, force_reprovision=False):
+        """Use the CLI approach with our custom project.yml"""
+        try:
+            # Check if already provisioned
+            if not force_reprovision:
+                existing_workspace = self._get_existing_workspace(project_id)
+                if existing_workspace:
+                    print(f"Project {project_id} already provisioned, using existing workspace: {existing_workspace}")
+                    return existing_workspace
+            
+            # Create the project.yml file dynamically
+            if not project_yml_path:
+                project_yml_path = self._create_dynamic_project_yml(project_id)
+            
+            # Create temporary workspace directory
+            with tempfile.TemporaryDirectory() as tmp_workspace:
+                print(f"Using temporary workspace: {tmp_workspace}")
+                
+                # Run nvflare provision command
+                cmd = [
+                    'nvflare', 'provision',
+                    '-p', project_yml_path,
+                    '-w', tmp_workspace
+                ]
+                
+                print(f"Running command: {' '.join(cmd)}")
+                result = subprocess.run(cmd, capture_output=True, text=True, cwd=os.path.dirname(project_yml_path))
+                
+                if result.returncode != 0:
+                    print(f"❌ CLI provisioning failed:")
+                    print(f"STDOUT: {result.stdout}")
+                    print(f"STDERR: {result.stderr}")
+                    raise Exception(f"CLI provisioning failed with return code {result.returncode}")
+                
+                print(f"✅ CLI provisioning successful:")
+                print(f"STDOUT: {result.stdout}")
+                
+                # Copy to final workspace
+                final_workspace = os.path.join(self.workspace_dir, f"project_{project_id}")
+                if os.path.exists(final_workspace):
+                    shutil.rmtree(final_workspace)
+                
+                shutil.copytree(tmp_workspace, final_workspace)
+                print(f"Copied to final workspace: {final_workspace}")
+                
+                return final_workspace
+                
+        except Exception as e:
+            print(f"Error in CLI provisioning: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _create_dynamic_project_yml(self, project_id):
+        """Create a dynamic project.yml file with the correct configuration"""
+        import yaml
+        
+        # Get project data
+        project = Project.query.get(project_id)
+        servers = Server.query.filter_by(project_id=project_id).all()
+        clients = Client.query.filter_by(project_id=project_id).all()
+        admins = Admin.query.filter_by(project_id=project_id).all()
+        
+        # Create the project configuration
+        project_config = {
+            'api_version': 3,
+            'name': getattr(project, 'short_name', project.name) or f"project_{project.id}",
+            'description': getattr(project, 'description', '') or f'Project {project.name}',
+            'scheme': 'grpc',  # Force grpc scheme
+            'overseer_agent': {
+                'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                'overseer_exists': False,
+                'args': {}
+            }
+        }
+        
+        # Set overseer endpoint if we have servers
+        if servers:
+            primary_server = servers[0]
+            project_config['overseer_agent']['args']['sp_end_point'] = f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
+        else:
+            project_config['overseer_agent']['args']['sp_end_point'] = "server:8002:8003"
+        
+        # Add servers
+        if servers:
+            project_config['servers'] = []
+            for server in servers:
+                server_config = {
+                    'name': server.name,
+                    'org': server.org or 'nvidia',
+                    'props': {
+                        'connection_security': getattr(server, 'connection_security', 'mtls'),
+                        'fed_learn_port': server.fed_learn_port,
+                        'admin_port': server.admin_port,
+                        'scheme': 'grpc'  # Force grpc scheme
+                    }
+                }
+                project_config['servers'].append(server_config)
+        
+        # Add clients
+        if clients:
+            project_config['clients'] = []
+            for client in clients:
+                client_config = {
+                    'name': client.name,
+                    'org': client.org or 'nvidia',
+                    'props': {}
+                }
+                if hasattr(client, 'capacity') and client.capacity:
+                    try:
+                        client_config['props']['capacity'] = json.loads(client.capacity)
+                    except:
+                        pass
+                project_config['clients'].append(client_config)
+        
+        # Add admins
+        if admins:
+            project_config['admins'] = []
+            for admin in admins:
+                admin_config = {
+                    'name': admin.email,
+                    'org': admin.org or 'nvidia',
+                    'props': {
+                        'role': getattr(admin, 'role', 'project_admin')
+                    }
+                }
+                project_config['admins'].append(admin_config)
+        
+        # Create temporary file
+        import tempfile
+        fd, project_yml_path = tempfile.mkstemp(suffix='.yml', prefix='project_')
+        os.close(fd)
+        
+        # Write the configuration to file
+        with open(project_yml_path, 'w') as f:
+            yaml.dump(project_config, f, default_flow_style=False, sort_keys=False)
+        
+        print(f"Created dynamic project.yml: {project_yml_path}")
+        print(f"Project config: {yaml.dump(project_config, default_flow_style=False, sort_keys=False)}")
+        
+        return project_yml_path

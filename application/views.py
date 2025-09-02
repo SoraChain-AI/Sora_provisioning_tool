@@ -7,7 +7,7 @@ from flask import Blueprint, request, jsonify, send_file, make_response
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
 from werkzeug.security import check_password_hash, generate_password_hash
 from . import db
-from .models import User, Project, Server, Client, Admin, UserApplication
+from .models import User, Project, Server, Client, Admin, UserApplication, Organization, Role
 from .provisioning import NVFlareProvisioningService
 from .nvflare_provisioner import NVFlareProvisionerService
 import io
@@ -178,13 +178,30 @@ def users_api():
                 response.status_code = 400
                 return add_cors_headers(response)
             
+            # Get or create organization
+            org_name = data['organization']
+            organization = Organization.query.filter_by(name=org_name).first()
+            if not organization:
+                organization = Organization(name=org_name, description=f'Organization for {org_name}')
+                db.session.add(organization)
+                db.session.flush()
+            
+            # Get or create default user role
+            default_role = Role.query.filter_by(name='user').first()
+            if not default_role:
+                default_role = Role(name='user', description='Regular user role')
+                db.session.add(default_role)
+                db.session.flush()
+            
             # Create new user
             user = User(
                 email=data['email'],
                 name=data['name'],
                 password_hash=generate_password_hash(data['password']),
                 organization=data['organization'],
-                approval_state=0  # Pending approval
+                approval_state=0,  # Pending approval
+                organization_id=organization.id,
+                role_id=default_role.id
             )
             
             db.session.add(user)
@@ -261,6 +278,12 @@ def get_projects():
             try:
                 # Get creator information
                 creator = User.query.get(project.created_by)
+                
+                # Get counts for servers, clients, and admins
+                server_count = Server.query.filter_by(project_id=project.id).count()
+                client_count = Client.query.filter_by(project_id=project.id).count()
+                admin_count = Admin.query.filter_by(project_id=project.id).count()
+                
                 project_data = {
                     'id': project.id,
                     'name': project.name,
@@ -273,7 +296,10 @@ def get_projects():
                     'created_by': project.created_by,
                     'creator_name': creator.name if creator else 'Unknown',
                     'creator_email': creator.email if creator else 'Unknown',
-                    'created_at': project.created_at.isoformat()
+                    'created_at': project.created_at.isoformat(),
+                    'server_count': server_count,
+                    'client_count': client_count,
+                    'admin_count': admin_count
                 }
                 project_list.append(project_data)
                 print(f"Processed project: {project.name}")
@@ -315,11 +341,35 @@ def create_project():
             ha_mode=data.get('ha_mode', False),
             frozen=data.get('frozen', False),
             public=data.get('public', False),
-            server_name=data.get('server_name', 'FLServer.com'),
+            server_name=data.get('server_name', ''),
             created_by=current_user.id
         )
         
         db.session.add(project)
+        db.session.flush()  # Get the project ID first
+        
+        # Automatically create a default server for the project
+        default_server = Server(
+            project_id=project.id,
+            name=data.get('server_name', ''),
+            org=current_user.organization,
+            fed_learn_port=8002,
+            admin_port=8003,
+            connection_security='mtls',
+            approval_state=1  # Auto-approved for project creator
+        )
+        db.session.add(default_server)
+        
+        # Automatically create a default admin for the project
+        default_admin = Admin(
+            project_id=project.id,
+            email=current_user.email,
+            org=current_user.organization,
+            role='project_admin',
+            approval_state=1  # Auto-approved for project creator
+        )
+        db.session.add(default_admin)
+        
         db.session.commit()
         
         response = jsonify({'message': 'Project created successfully', 'project_id': project.id})
@@ -554,20 +604,20 @@ def update_server(project_id, server_id):
         if not current_user:
             response = jsonify({'error': 'User not found'})
             response.status_code = 401
-            return response
+            return add_cors_headers(response)
         
         # Get project to check ownership
         project = Project.query.get(project_id)
         if not project:
             response = jsonify({'error': 'Project not found'})
             response.status_code = 404
-            return response
+            return add_cors_headers(response)
         
         # Check if user is the project creator or a system admin
         if not can_edit_project(project, current_user):
             response = jsonify({'error': 'Only the project creator can modify this project'})
             response.status_code = 403
-            return response
+            return add_cors_headers(response)
         
         data = request.get_json()
         server = Server.query.filter_by(id=server_id, project_id=project_id).first()
@@ -575,23 +625,30 @@ def update_server(project_id, server_id):
         if not server:
             response = jsonify({'error': 'Server not found'})
             response.status_code = 404
-            return response
-    
+            return add_cors_headers(response)
+        
+        # Update server properties
+        if 'name' in data:
             server.name = data['name']
-        server.org = data['org']
-        server.fed_learn_port = data.get('fed_learn_port', 8002)
-        server.admin_port = data.get('admin_port', 8003)
-        server.connection_security = data.get('connection_security', 'mtls')
+        if 'org' in data:
+            server.org = data['org']
+        if 'fed_learn_port' in data:
+            server.fed_learn_port = data['fed_learn_port']
+        if 'admin_port' in data:
+            server.admin_port = data['admin_port']
+        if 'connection_security' in data:
+            server.connection_security = data['connection_security']
         
         db.session.commit()
-        return jsonify({'message': 'Server updated successfully'})
+        response = jsonify({'message': 'Server updated successfully'})
+        return add_cors_headers(response)
         
     except Exception as e:
         print(f"Error updating server: {e}")
         db.session.rollback()
         response = jsonify({'error': 'Internal server error'})
         response.status_code = 500
-        return response
+        return add_cors_headers(response)
 
 @api_bp.route('/projects/<int:project_id>/servers/<int:server_id>', methods=['DELETE'])
 @jwt_required()
@@ -660,6 +717,17 @@ def add_client(project_id):
                 response.status_code = 400
                 return response
         
+        # Validate GPU values (allow 0)
+        if 'num_gpus' in data and data['num_gpus'] is not None and data['num_gpus'] < 0:
+            response = jsonify({'error': 'Number of GPUs cannot be negative'})
+            response.status_code = 400
+            return response
+        
+        if 'gpu_memory' in data and data['gpu_memory'] is not None and data['gpu_memory'] < 0:
+            response = jsonify({'error': 'GPU memory cannot be negative'})
+            response.status_code = 400
+            return response
+        
         # Check if project exists
         project = Project.query.get(project_id)
         if not project:
@@ -681,6 +749,14 @@ def add_client(project_id):
             response.status_code = 403
             return response
         
+        # Get or create organization
+        org_name = data['org']
+        organization = Organization.query.filter_by(name=org_name).first()
+        if not organization:
+            organization = Organization(name=org_name, description=f'Organization for {org_name}')
+            db.session.add(organization)
+            db.session.flush()
+        
         client = Client(
             project_id=project_id,
             name=data['name'],
@@ -688,7 +764,9 @@ def add_client(project_id):
             description=data.get('description', ''),
             num_gpus=data.get('num_gpus', 1),
             gpu_memory=data.get('gpu_memory', 16),
-            approval_state=0  # Pending approval
+            approval_state=0,  # Pending approval
+            organization_id=organization.id,
+            creator_id=current_user.id
         )
         
         db.session.add(client)
@@ -1146,6 +1224,20 @@ def provision_project(project_id):
             response.status_code = 403
             return response
         
+        # Check if project has servers configured
+        servers = Server.query.filter_by(project_id=project_id).all()
+        if not servers:
+            response = jsonify({'error': 'Cannot provision project: Server configuration is missing. Please add at least one server to the project before provisioning.'})
+            response.status_code = 400
+            return add_cors_headers(response)
+        
+        # Check if project has clients configured
+        clients = Client.query.filter_by(project_id=project_id).all()
+        if not clients:
+            response = jsonify({'error': 'Cannot provision project: Client configuration is missing. Please add at least one client to the project before provisioning.'})
+            response.status_code = 400
+            return add_cors_headers(response)
+        
         # Try using the new NVFlare provisioner first, fallback to CLI if needed
         try:
             workspace = nvflare_provisioner.provision_project(project_id)
@@ -1190,6 +1282,20 @@ def reprovision_project(project_id):
             response = jsonify({'error': 'Only the project creator can reprovision this project'})
             response.status_code = 403
             return response
+        
+        # Check if project has servers configured
+        servers = Server.query.filter_by(project_id=project_id).all()
+        if not servers:
+            response = jsonify({'error': 'Cannot reprovision project: Server configuration is missing. Please add at least one server to the project before provisioning.'})
+            response.status_code = 400
+            return add_cors_headers(response)
+        
+        # Check if project has clients configured
+        clients = Client.query.filter_by(project_id=project_id).all()
+        if not clients:
+            response = jsonify({'error': 'Cannot reprovision project: Client configuration is missing. Please add at least one client to the project before provisioning.'})
+            response.status_code = 400
+            return add_cors_headers(response)
         
         # Try using the new NVFlare provisioner first, fallback to CLI if needed
         try:
