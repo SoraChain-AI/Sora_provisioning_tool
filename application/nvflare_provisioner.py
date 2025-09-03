@@ -69,18 +69,8 @@ class CustomStaticFileBuilder(StaticFileBuilder):
         print(f"🔧 CustomStaticFileBuilder: Setting server target to {target}")
         print(f"🔧 CustomStaticFileBuilder: Server will listen on port {fed_learn_port}")
 
-        ctx.build_from_template(
-            dest_dir,
-            TemplateSectionKey.FED_SERVER,
-            ProvFileName.FED_SERVER_JSON,
-            replacement={
-                "name": project.name,
-                "target": target,  # Single port for service discovery
-                "scheme": "grpc",
-                "conn_sec": conn_sec,
-                "sp_end_point": sp_end_point,
-            },
-        )
+        # Build the fed_server.json with correct structure including admin_host and admin_port
+        self._build_fed_server_json(dest_dir, project, server, target, conn_sec, sp_end_point, admin_port)
 
         # Configure server to listen on fed_learn_port
         self._configure_server_listeners(server, ctx, fed_learn_port, admin_port)
@@ -148,8 +138,7 @@ class CustomStaticFileBuilder(StaticFileBuilder):
         dest_dir = ctx.get_ws_dir(server)
         ctx.build_from_template(dest_dir, TemplateSectionKey.SERVER_README, ProvFileName.README_TXT, exe=False)
         
-        # Post-process the fed_server.json to ensure dual-port target
-        self._fix_fed_server_target(dest_dir, server, fed_learn_port, admin_port)
+
 
     def _configure_server_listeners(self, server, ctx, fed_learn_port: int, admin_port: int):
         """Configure server to listen on fed_learn_port"""
@@ -157,7 +146,7 @@ class CustomStaticFileBuilder(StaticFileBuilder):
         
         # Configure the listener for federated learning and admin operations
         listener_config = {
-            PropKey.SCHEME: 'grpc',
+            PropKey.SCHEME: 'agrpc',
             PropKey.DEFAULT_HOST: server.get_default_host(),
             PropKey.PORT: fed_learn_port,
             PropKey.CONN_SECURITY: server.get_prop_fb(PropKey.CONN_SECURITY, 'mtls')
@@ -169,42 +158,96 @@ class CustomStaticFileBuilder(StaticFileBuilder):
         print(f"🔧 Server listener configured:")
         print(f"  - Listener: {listener_config}")
     
-    def _fix_fed_server_target(self, dest_dir, server, fed_learn_port: int, admin_port: int):
-        """Post-process fed_server.json to ensure correct target format"""
+    def _build_fed_server_json(self, dest_dir, project, server, target, conn_sec, sp_end_point, admin_port):
+        """Build fed_server.json with correct structure including admin_host and admin_port"""
         import json
         import os
         
-        fed_server_path = os.path.join(dest_dir, "..", "startup", ProvFileName.FED_SERVER_JSON)
-        if not os.path.exists(fed_server_path):
-            print(f"⚠️  fed_server.json not found at {fed_server_path}")
-            return
+        # Create the correct fed_server.json structure
+        fed_server_data = {
+            "format_version": 2,
+            "servers": [
+                {
+                    "name": project.name,
+                    "service": {
+                        "target": target,
+                        "scheme": "agrpc"
+                    },
+                    "admin_host": server.name,  # Add admin_host
+                    "admin_port": admin_port,   # Add admin_port
+                    "ssl_private_key": "server.key",
+                    "ssl_cert": "server.crt",
+                    "ssl_root_cert": "rootCA.pem"
+                }
+            ],
+            "overseer_agent": {
+                "path": "nvflare.ha.dummy_overseer_agent.DummyOverseerAgent",
+                "args": {
+                    "sp_end_point": sp_end_point
+                }
+            }
+        }
         
-        try:
-            with open(fed_server_path, 'r') as f:
-                fed_server_data = json.load(f)
-            
-            # Ensure the target uses single port (gRPC limitation)
-            if 'servers' in fed_server_data and len(fed_server_data['servers']) > 0:
-                server_config = fed_server_data['servers'][0]
-                if 'service' in server_config:
-                    # Set the target to single port for service discovery
-                    new_target = f"{server.name}:{fed_learn_port}"
-                    
-                    server_config['service']['target'] = new_target
-                    print(f"🔧 Fixed fed_server.json target to: {new_target}")
-                    
-                    # Write back the modified JSON
-                    with open(fed_server_path, 'w') as f:
-                        json.dump(fed_server_data, f, indent=2)
-                    print(f"✅ Updated {fed_server_path}")
-                else:
-                    print(f"⚠️  No 'service' section found in fed_server.json")
-            else:
-                print(f"⚠️  No 'servers' section found in fed_server.json")
-                
-        except Exception as e:
-            print(f"❌ Error fixing fed_server.json: {e}")
+        # Add connection_security if specified
+        if conn_sec and conn_sec != 'none':
+            fed_server_data["servers"][0]["connection_security"] = conn_sec
+        
+        # Write the fed_server.json file
+        fed_server_path = os.path.join(dest_dir, "..", "startup", ProvFileName.FED_SERVER_JSON)
+        os.makedirs(os.path.dirname(fed_server_path), exist_ok=True)
+        
+        with open(fed_server_path, 'w') as f:
+            json.dump(fed_server_data, f, indent=2)
+        
+        print(f"✅ Created fed_server.json with admin_host: {server.name}, admin_port: {admin_port}")
+        print(f"✅ File written to: {fed_server_path}")
     
+    def _build_fed_admin_json(self, dest_dir, sp_end_point):
+        """Build fed_admin.json with exact structure matching working provision3 setup"""
+        import json
+        import os
+        
+        # Extract server name from sp_end_point
+        server_name = sp_end_point.split(':')[0]
+        
+        # Create admin configuration with correct host and protocol
+        fed_admin_data = {
+            "format_version": 1,
+            "admin": {
+                "project_name": "project_2",
+                "server_identity": server_name,  # Add server_identity to match certificate CN
+                "with_file_transfer": True,
+                "upload_dir": "transfer",
+                "download_dir": "transfer",
+                "with_login": True,
+                "with_ssl": True,
+                "cred_type": "cert",
+                "client_key": "client.key",
+                "client_cert": "client.crt",
+                "ca_cert": "rootCA.pem",
+                "prompt": "> ",
+                "host": server_name,  # Use correct server hostname
+                "port": 8002,        # Connect to federated learning port
+                "scheme": "agrpc",   # Use correct protocol
+                "overseer_agent": {
+                    "path": "nvflare.ha.dummy_overseer_agent.DummyOverseerAgent",
+                    "args": {
+                        "sp_end_point": sp_end_point
+                    }
+                }
+            }
+        }
+        
+        # Write the fed_admin.json file
+        fed_admin_path = os.path.join(dest_dir, ProvFileName.FED_ADMIN_JSON)
+        os.makedirs(os.path.dirname(fed_admin_path), exist_ok=True)
+        
+        with open(fed_admin_path, 'w') as f:
+            json.dump(fed_admin_data, f, indent=2)
+        
+        print(f"✅ Created fed_admin.json with sp_end_point: {sp_end_point}")
+        print(f"✅ File written to: {fed_admin_path}")
+
     def prepare_admin_config(self, admin, ctx):
         """Override prepare_admin_config to add overseer_agent configuration"""
         project = ctx.get_project()
@@ -221,35 +264,37 @@ class CustomStaticFileBuilder(StaticFileBuilder):
         conn_host, conn_port = self._determine_conn_target(admin, ctx)
         if not conn_port:
             conn_port = ctx.get(CtxKey.ADMIN_PORT)
+        
+        # Force admin to connect to admin port (8003) instead of fed_learn_port (8002)
+        admin_port = ctx.get(CtxKey.ADMIN_PORT)
+        if admin_port:
+            conn_port = admin_port
 
-        # Get overseer agent configuration from project, but force admin to use fed_learn_port (8002)
+        # Get overseer agent configuration from project
         fed_learn_port = ctx.get(CtxKey.FED_LEARN_PORT)
+        admin_port = ctx.get(CtxKey.ADMIN_PORT)
         if not fed_learn_port:
             fed_learn_port = 8002
-        # For admin, ensure both ports in sp_end_point point to fed_learn_port so it connects on 8002
-        sp_end_point = f"{server.name}:{fed_learn_port}:{fed_learn_port}"
+        if not admin_port:
+            admin_port = 8003
+        # For admin, use the same sp_end_point as server: fed_learn_port:admin_port
+        sp_end_point = f"{server.name}:{fed_learn_port}:{admin_port}"
         
         print(f"🔧 CustomStaticFileBuilder: Adding overseer_agent to admin config with sp_end_point: {sp_end_point}")
 
+        # Use minimal admin configuration like the working provision3 setup
         replacement_dict = {
-            "project_name": project.name,
-            "server_identity": server.name,
-            "scheme": self.scheme,
-            "conn_sec": conn_sec,
-            "host": conn_host,
-            "port": conn_port,
-            "uid_source": uid_source,
+            "with_file_transfer": "true",
+            "upload_dir": "transfer",
+            "download_dir": "transfer",
+            "with_login": "true",
+            "with_ssl": "true",
+            "cred_type": "cert",
+            "prompt": "> ",
         }
         
-        ctx.build_from_template(
-            dest_dir=ctx.get_kit_dir(admin),
-            temp_section=TemplateSectionKey.FED_ADMIN,
-            file_name=ProvFileName.FED_ADMIN_JSON,
-            replacement=replacement_dict,
-        )
-
-        # Add overseer_agent configuration to fed_admin.json after template is built
-        self._add_overseer_agent_to_admin_config(ctx.get_kit_dir(admin), sp_end_point)
+        # Create custom fed_admin.json that matches the working provision3 setup exactly
+        self._build_fed_admin_json(ctx.get_kit_dir(admin), sp_end_point)
 
         # create default resources in local
         ctx.build_from_template(
@@ -269,8 +314,11 @@ class CustomStaticFileBuilder(StaticFileBuilder):
             return
         
         try:
+            print(f"🔧 Reading fed_admin.json from: {fed_admin_path}")
             with open(fed_admin_path, 'r') as f:
                 fed_admin_data = json.load(f)
+            
+            print(f"🔧 Current fed_admin.json content: {json.dumps(fed_admin_data, indent=2)}")
             
             # Add overseer_agent configuration
             if 'admin' not in fed_admin_data or not isinstance(fed_admin_data['admin'], dict):
@@ -281,6 +329,8 @@ class CustomStaticFileBuilder(StaticFileBuilder):
                     "sp_end_point": sp_end_point
                 }
             }
+            
+            print(f"🔧 Updated fed_admin.json with sp_end_point: {sp_end_point}")
             
             # Write back the modified JSON
             with open(fed_admin_path, 'w') as f:
@@ -308,8 +358,7 @@ class NVFlareProvisionerService:
         
         builders = [
             WorkspaceBuilder(),
-            # CustomStaticFileBuilder(
-            StaticFileBuilder(
+            CustomStaticFileBuilder( # Re-enabled with cleaned approach
                 config_folder="config",
                 scheme=scheme,
                 docker_image=docker_image,
@@ -384,7 +433,7 @@ class NVFlareProvisionerService:
                 
                 # Get provisioner
                 print("🔍 Getting project scheme and docker image...")
-                scheme = getattr(project, 'scheme', 'grpc')
+                scheme = 'agrpc'  # Force agrpc scheme
                 docker_image = getattr(project, 'app_location', 'nvflare/nvflare')
                 if docker_image and ' ' in docker_image:
                     docker_image = docker_image.split(" ")[-1]
@@ -421,10 +470,10 @@ class NVFlareProvisionerService:
                 
                 # Set critical properties to override template defaults
                 critical_props = {
-                    PropKey.SCHEME: 'grpc',  # Force grpc scheme
+                    PropKey.SCHEME: 'agrpc',  # Force agrpc scheme
                 }
                 
-                # Add overseer agent configuration to override template
+                # Add overseer agent configuration to project properties
                 if servers:
                     primary_server = servers[0]
                     overseer_endpoint = f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
@@ -435,7 +484,7 @@ class NVFlareProvisionerService:
                             'sp_end_point': overseer_endpoint
                         }
                     }
-                    print(f"🔍 Set critical props overseer sp_end_point: {overseer_endpoint}")
+                    print(f"🔍 Set project overseer sp_end_point: {overseer_endpoint}")
                 
                 prov_project = ProvProject(
                     project_name,
@@ -449,7 +498,7 @@ class NVFlareProvisionerService:
                 # Add minimal server/client/admin structure to ProvProject (required by provisioner)
                 # The actual configuration will come from the custom project.yml
                 if servers:
-                    # primary_server = servers[0]
+                    primary_server = servers[0]
                     # print(f"🔍 primary_server: {primary_server.__dict__.__str__()}")
 
                     server_props = {
@@ -457,21 +506,29 @@ class NVFlareProvisionerService:
                         PropKey.ADMIN_PORT: getattr(primary_server, 'admin_port', 8003),
                         PropKey.DEFAULT_HOST: getattr(primary_server, 'name', 'FLServer.com'),          
                         PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls'),
-                        # Force the scheme to be grpc
-                        PropKey.SCHEME: 'grpc',
+                        # Force the scheme to be agrpc
+                        PropKey.SCHEME: 'agrpc',
                         # Configure server to listen on fed_learn_port
                         PropKey.LISTENING_HOST: {
-                            PropKey.SCHEME: 'grpc',
+                            PropKey.SCHEME: 'agrpc',
                             PropKey.DEFAULT_HOST: primary_server.name,
                             PropKey.PORT: primary_server.fed_learn_port,  # Port 8002
                             PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls')
                         },
-                        # Enable admin command modules
-                        'enable_admin_commands': True,
-                        'cmd_modules': ['sys_cmd', 'job_cmds', 'training_cmds', 'info_coll_cmd'],
-                        # Force command module registration
-                        'force_cmd_registration': True,
-                        'admin_cmd_modules': ['sys_cmd', 'job_cmds', 'training_cmds', 'info_coll_cmd', 'shell_cmd']
+                        # Add admin_host and admin_port for fed_server.json
+                        'admin_host': primary_server.name,
+                        'admin_port': primary_server.admin_port,
+                        # Add service target configuration
+                        'service_target': f"{primary_server.name}:{primary_server.fed_learn_port}",
+                        # Add server_identity to match certificate CN
+                        'server_identity': primary_server.name,
+                        # Add overseer agent configuration
+                        'overseer_agent': {
+                            'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                            'args': {
+                                'sp_end_point': f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
+                            }
+                        }
                     }
                     
                     # Add any additional server properties from database
@@ -526,6 +583,27 @@ class NVFlareProvisionerService:
                             PropKey.HOST: primary_server.name,
                             PropKey.PORT: primary_server.fed_learn_port,  # Port 8002
                             PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls')
+                        },
+                        # Add admin configuration for fed_admin.json
+                        'host': primary_server.name,
+                        'port': primary_server.fed_learn_port,  # Connect to federated learning port
+                        'scheme': 'agrpc',
+                        'connection_security': getattr(primary_server, 'connection_security', 'mtls'),
+                        'with_file_transfer': True,
+                        'upload_dir': 'transfer',
+                        'download_dir': 'transfer',
+                        'with_login': True,
+                        'with_ssl': True,
+                        'cred_type': 'cert',
+                        'prompt': '> ',
+                        # Add server_identity to match certificate CN
+                        'server_identity': primary_server.name,
+                        # Add overseer agent configuration
+                        'overseer_agent': {
+                            'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                            'args': {
+                                'sp_end_point': f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
+                            }
                         }
                     }
                     
@@ -688,7 +766,7 @@ class NVFlareProvisionerService:
             'api_version': 3,
             'name': getattr(project, 'short_name', project.name) or f"project_{project.id}",
             'description': getattr(project, 'description', '') or f'Project {project.name}',
-            'scheme': 'grpc',  # Force grpc scheme
+            'scheme': 'agrpc',  # Force agrpc scheme
             'overseer_agent': {
                 'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
                 'overseer_exists': False,
@@ -714,8 +792,17 @@ class NVFlareProvisionerService:
                         'connection_security': getattr(server, 'connection_security', 'mtls'),
                         'fed_learn_port': server.fed_learn_port,
                         'admin_port': server.admin_port,
-                        'scheme': 'grpc',  # Force grpc scheme
-                        'service_target': f"{server.name}:{server.fed_learn_port}:{server.admin_port}"  # Custom property for service target
+                        'scheme': 'agrpc',  # Force agrpc scheme
+                        'service_target': f"{server.name}:{server.fed_learn_port}:{server.admin_port}",  # Custom property for service target
+                        'admin_host': server.name,
+                        'admin_port': server.admin_port,
+                        'server_identity': server.name,  # Add server_identity to match certificate CN
+                        'overseer_agent': {
+                            'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                            'args': {
+                                'sp_end_point': f"{server.name}:{server.fed_learn_port}:{server.admin_port}"
+                            }
+                        }
                     }
                 }
                 project_config['servers'].append(server_config)
@@ -744,7 +831,25 @@ class NVFlareProvisionerService:
                     'name': admin.email,
                     'org': admin.org or 'nvidia',
                     'props': {
-                        'role': getattr(admin, 'role', 'project_admin')
+                        'role': getattr(admin, 'role', 'project_admin'),
+                        'host': primary_server.name,
+                        'port': primary_server.fed_learn_port,
+                        'scheme': 'agrpc',
+                        'connection_security': getattr(primary_server, 'connection_security', 'mtls'),
+                        'with_file_transfer': True,
+                        'upload_dir': 'transfer',
+                        'download_dir': 'transfer',
+                        'with_login': True,
+                        'with_ssl': True,
+                        'cred_type': 'cert',
+                        'prompt': '> ',
+                        'server_identity': primary_server.name,  # Add server_identity to match certificate CN
+                        'overseer_agent': {
+                            'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
+                            'args': {
+                                'sp_end_point': f"{primary_server.name}:{primary_server.fed_learn_port}:{primary_server.admin_port}"
+                            }
+                        }
                     }
                 }
                 project_config['admins'].append(admin_config)
@@ -824,7 +929,7 @@ class NVFlareProvisionerService:
             'api_version': 3,
             'name': getattr(project, 'short_name', project.name) or f"project_{project.id}",
             'description': getattr(project, 'description', '') or f'Project {project.name}',
-            'scheme': 'grpc',  # Force grpc scheme
+            'scheme': 'agrpc',  # Force agrpc scheme
             'overseer_agent': {
                 'path': 'nvflare.ha.dummy_overseer_agent.DummyOverseerAgent',
                 'overseer_exists': False,
@@ -850,7 +955,7 @@ class NVFlareProvisionerService:
                         'connection_security': getattr(server, 'connection_security', 'mtls'),
                         'fed_learn_port': server.fed_learn_port,
                         'admin_port': server.admin_port,
-                        'scheme': 'grpc'  # Force grpc scheme
+                        'scheme': 'agrpc'  # Force agrpc scheme
                     }
                 }
                 project_config['servers'].append(server_config)

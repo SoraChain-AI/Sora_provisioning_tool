@@ -51,7 +51,7 @@ class Project(db.Model):
     title = db.Column(db.String(512), default="")
     description = db.Column(db.String(2048), default="")
     api_version = db.Column(db.Integer, default=3)
-    scheme = db.Column(db.String(64), default='grpc')
+    scheme = db.Column(db.String(64), default='agrpc')
     server_name = db.Column(db.String(128), nullable=False, default='')
     server1 = db.Column(db.String(128), default="")
     server2 = db.Column(db.String(128), default="")
@@ -169,7 +169,7 @@ def init_default_data():
                 short_name='example',
                 title='Example Sorachain Project',
                 description='Default Sorachain project',
-                scheme='grpc',
+                scheme='agrpc',
                         server_name='',
         server1='',
                 app_location='nvflare/nvflare',
