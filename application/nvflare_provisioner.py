@@ -148,8 +148,7 @@ class CustomStaticFileBuilder(StaticFileBuilder):
         listener_config = {
             PropKey.SCHEME: 'agrpc',
             PropKey.DEFAULT_HOST: server.get_default_host(),
-            PropKey.PORT: fed_learn_port,
-            PropKey.CONN_SECURITY: server.get_prop_fb(PropKey.CONN_SECURITY, 'mtls')
+            PropKey.PORT: fed_learn_port
         }
         
         # Set the listening_host for the server
@@ -188,9 +187,7 @@ class CustomStaticFileBuilder(StaticFileBuilder):
             }
         }
         
-        # Add connection_security if specified
-        if conn_sec and conn_sec != 'none':
-            fed_server_data["servers"][0]["connection_security"] = conn_sec
+        # Connection security is handled by SSL certificates, no need to add connection_security property
         
         # Write the fed_server.json file
         fed_server_path = os.path.join(dest_dir, "..", "startup", ProvFileName.FED_SERVER_JSON)
@@ -207,8 +204,10 @@ class CustomStaticFileBuilder(StaticFileBuilder):
         import json
         import os
         
-        # Extract server name from sp_end_point
-        server_name = sp_end_point.split(':')[0]
+        # Extract server name and admin port from sp_end_point
+        parts = sp_end_point.split(':')
+        server_name = parts[0]
+        admin_port = int(parts[2]) if len(parts) > 2 else 8003
         
         # Create admin configuration with correct host and protocol
         fed_admin_data = {
@@ -227,7 +226,7 @@ class CustomStaticFileBuilder(StaticFileBuilder):
                 "ca_cert": "rootCA.pem",
                 "prompt": "> ",
                 "host": server_name,  # Use correct server hostname
-                "port": 8002,        # Connect to federated learning port
+                "port": admin_port,        # Connect to admin port
                 "scheme": "agrpc",   # Use correct protocol
                 "overseer_agent": {
                     "path": "nvflare.ha.dummy_overseer_agent.DummyOverseerAgent",
@@ -505,15 +504,13 @@ class NVFlareProvisionerService:
                         PropKey.FED_LEARN_PORT: getattr(primary_server, 'fed_learn_port', 8002),
                         PropKey.ADMIN_PORT: getattr(primary_server, 'admin_port', 8003),
                         PropKey.DEFAULT_HOST: getattr(primary_server, 'name', 'FLServer.com'),          
-                        PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls'),
                         # Force the scheme to be agrpc
                         PropKey.SCHEME: 'agrpc',
                         # Configure server to listen on fed_learn_port
                         PropKey.LISTENING_HOST: {
                             PropKey.SCHEME: 'agrpc',
                             PropKey.DEFAULT_HOST: primary_server.name,
-                            PropKey.PORT: primary_server.fed_learn_port,  # Port 8002
-                            PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls')
+                            PropKey.PORT: primary_server.fed_learn_port  # Port 8002
                         },
                         # Add admin_host and admin_port for fed_server.json
                         'admin_host': primary_server.name,
@@ -577,18 +574,16 @@ class NVFlareProvisionerService:
                     primary_admin = admins[0]
                     admin_props = {
                         PropKey.ROLE: getattr(primary_admin, 'role', 'project_admin'),
-                        # Admin connects to server's fed_learn_port (8002) for all operations
+                        # Admin connects to server's admin_port (8003) for all operations
                         PropKey.CONNECT_TO: {
                             PropKey.NAME: primary_server.name,
                             PropKey.HOST: primary_server.name,
-                            PropKey.PORT: primary_server.fed_learn_port,  # Port 8002
-                            PropKey.CONN_SECURITY: getattr(primary_server, 'connection_security', 'mtls')
+                            PropKey.PORT: primary_server.admin_port  # Port 8003
                         },
                         # Add admin configuration for fed_admin.json
                         'host': primary_server.name,
-                        'port': primary_server.fed_learn_port,  # Connect to federated learning port
+                        'port': primary_server.admin_port,  # Connect to admin port
                         'scheme': 'agrpc',
-                        'connection_security': getattr(primary_server, 'connection_security', 'mtls'),
                         'with_file_transfer': True,
                         'upload_dir': 'transfer',
                         'download_dir': 'transfer',
@@ -789,7 +784,6 @@ class NVFlareProvisionerService:
                     'name': server.name,
                     'org': server.org or 'nvidia',
                     'props': {
-                        'connection_security': getattr(server, 'connection_security', 'mtls'),
                         'fed_learn_port': server.fed_learn_port,
                         'admin_port': server.admin_port,
                         'scheme': 'agrpc',  # Force agrpc scheme
@@ -833,9 +827,8 @@ class NVFlareProvisionerService:
                     'props': {
                         'role': getattr(admin, 'role', 'project_admin'),
                         'host': primary_server.name,
-                        'port': primary_server.fed_learn_port,
+                        'port': primary_server.admin_port,
                         'scheme': 'agrpc',
-                        'connection_security': getattr(primary_server, 'connection_security', 'mtls'),
                         'with_file_transfer': True,
                         'upload_dir': 'transfer',
                         'download_dir': 'transfer',
@@ -952,7 +945,6 @@ class NVFlareProvisionerService:
                     'name': server.name,
                     'org': server.org or 'nvidia',
                     'props': {
-                        'connection_security': getattr(server, 'connection_security', 'mtls'),
                         'fed_learn_port': server.fed_learn_port,
                         'admin_port': server.admin_port,
                         'scheme': 'agrpc'  # Force agrpc scheme
